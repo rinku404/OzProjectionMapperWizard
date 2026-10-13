@@ -53,8 +53,20 @@ class PlayerServer(
     private val director: PlaybackDirector,
     private val platform: PlatformInfo,
 ) {
-    fun start(port: Int = PlayerProtocol.DEFAULT_PORT): EmbeddedServer<*, *> =
-        embeddedServer(CIO, port = port, host = "0.0.0.0") { module() }.start(wait = false)
+    private var engine: EmbeddedServer<*, *>? = null
+
+    /** Starts listening on all interfaces. Blocking network work: call it off the main thread. */
+    @Synchronized
+    fun start(port: Int = PlayerProtocol.DEFAULT_PORT) {
+        if (engine != null) return
+        engine = embeddedServer(CIO, port = port, host = "0.0.0.0") { module() }.start(wait = false)
+    }
+
+    @Synchronized
+    fun stop() {
+        engine?.stop(500, 1000)
+        engine = null
+    }
 
     fun Application.module() {
         install(ContentNegotiation) { json(ProjectJson.json) }

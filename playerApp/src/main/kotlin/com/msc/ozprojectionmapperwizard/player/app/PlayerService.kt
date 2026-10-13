@@ -15,7 +15,6 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.ServiceCompat
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
-import io.ktor.server.engine.EmbeddedServer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -24,7 +23,6 @@ import kotlinx.coroutines.launch
  * foreground service so the system does not stop it while a show plays.
  */
 class PlayerService : Service() {
-    @Volatile private var server: EmbeddedServer<*, *>? = null
     private var nsdListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -36,9 +34,8 @@ class PlayerService : Service() {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, notification(), type)
         // Binding the socket is network work, which Android does not allow on the main thread.
         player.scope.launch(Dispatchers.IO) {
-            server = runCatching { player.server.start(PlayerProtocol.DEFAULT_PORT) }
+            runCatching { player.server.start(PlayerProtocol.DEFAULT_PORT) }
                 .onFailure { Log.e(TAG, "Could not start the player server", it) }
-                .getOrNull()
         }
         advertise()
     }
@@ -48,7 +45,7 @@ class PlayerService : Service() {
     override fun onDestroy() {
         nsdListener?.let { runCatching { getSystemService(NsdManager::class.java).unregisterService(it) } }
         multicastLock?.takeIf { it.isHeld }?.release()
-        server?.let { s -> player.scope.launch(Dispatchers.IO) { s.stop(500, 1000) } }
+        player.scope.launch(Dispatchers.IO) { player.server.stop() }
         super.onDestroy()
     }
 
@@ -63,8 +60,12 @@ class PlayerService : Service() {
             port = PlayerProtocol.DEFAULT_PORT
         }
         val listener = object : NsdManager.RegistrationListener {
-            override fun onServiceRegistered(info: NsdServiceInfo) = Log.i(TAG, "Advertised as ${info.serviceName}")
-            override fun onRegistrationFailed(info: NsdServiceInfo, error: Int) = Log.w(TAG, "Advertising failed: $error")
+            override fun onServiceRegistered(info: NsdServiceInfo) {
+                Log.i(TAG, "Advertised as ${info.serviceName}")
+            }
+            override fun onRegistrationFailed(info: NsdServiceInfo, error: Int) {
+                Log.w(TAG, "Advertising failed: $error")
+            }
             override fun onServiceUnregistered(info: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(info: NsdServiceInfo, error: Int) = Unit
         }

@@ -53,7 +53,7 @@ class MainActivity : Activity() {
         playerView.player = exo
 
         PlayerService.start(this)
-        scope.launch { player.director.playback.collect(::show) }
+        scope.launch { player.director.playback.collect { show(it) } }
         // The PIN changes after each pairing and the address after a network change.
         scope.launch {
             while (isActive) {
