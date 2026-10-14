@@ -90,7 +90,9 @@ jobs:
             oz-controller.apk
             oz-controller.msi
             blender/oz_projection_export.py
+            blender/oz-sample-box.blend
           body: |
             Controller app. On a Windows PC, download and run oz-controller.msi. On an Android phone,
             download oz-controller.apk, open it and allow "Install unknown apps" when Android asks.
             For Blender, download oz_projection_export.py and install it from Edit > Preferences > Add-ons (Install from Disk).
+            oz-sample-box.blend is a ready-to-export example (Blender 5.2 or newer).

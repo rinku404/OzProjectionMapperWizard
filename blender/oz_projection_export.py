@@ -28,13 +28,22 @@ FORMAT = "oz-surfaces"
 FILE_NAME = "oz-surfaces.json"
 
 
-class OzExportSettings(bpy.types.PropertyGroup):
-    output_dir: StringProperty(
+def folder_property():
+    options = dict(
         name="Folder",
-        description="Where the renders and oz-surfaces.json are saved",
+        description="Where the renders and oz-surfaces.json are saved (// means next to the .blend file)",
         subtype="DIR_PATH",
         default="//oz_export/",
     )
+    # Newer Blender asks paths to declare that "//" (relative to the .blend) is allowed.
+    try:
+        return StringProperty(options={"PATH_SUPPORTS_BLEND_RELATIVE"}, **options)
+    except TypeError:
+        return StringProperty(**options)
+
+
+class OzExportSettings(bpy.types.PropertyGroup):
+    output_dir: folder_property()
     max_size: IntProperty(
         name="Size",
         description="Longest side of each face's render, in pixels",
@@ -64,9 +73,27 @@ def selected_faces(context):
     return faces
 
 
-def face_name(obj, poly, count_in_object):
-    name = obj.name if count_in_object == 1 else f"{obj.name} {poly.index}"
-    return name
+def face_names(faces):
+    """A readable, unique name per face: the object's name, plus the face's material when the
+    object has several faces (so naming a material "Door" names the surface "Box Door")."""
+    per_object = {}
+    for obj, _ in faces:
+        per_object[obj.name] = per_object.get(obj.name, 0) + 1
+    names = []
+    for obj, poly in faces:
+        if per_object[obj.name] == 1:
+            names.append(obj.name)
+            continue
+        slots = obj.material_slots
+        material = slots[poly.material_index].material if poly.material_index < len(slots) else None
+        names.append(f"{obj.name} {material.name}" if material else f"{obj.name} {poly.index}")
+    # Faces sharing a material get numbered.
+    seen = {}
+    for i, name in enumerate(names):
+        if names.count(name) > 1:
+            seen[name] = seen.get(name, 0) + 1
+            names[i] = f"{name} {seen[name]}"
+    return names
 
 
 def set_media_type(image_settings, media_type):
@@ -118,6 +145,9 @@ class OZ_OT_export_surfaces(bpy.types.Operator):
             self.report({"ERROR"}, "Select the faces to project on (in Edit Mode) first")
             return {"CANCELLED"}
 
+        if settings.output_dir.startswith("//") and not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the .blend file first, so the export folder can go next to it")
+            return {"CANCELLED"}
         folder = bpy.path.abspath(settings.output_dir)
         os.makedirs(folder, exist_ok=True)
 
@@ -126,9 +156,7 @@ class OZ_OT_export_surfaces(bpy.types.Operator):
         animated = frames > 1
         duration = frames / fps if animated else 10.0
 
-        per_object = {}
-        for obj, _ in faces:
-            per_object[obj.name] = per_object.get(obj.name, 0) + 1
+        names = face_names(faces)
 
         saved = self.save_render_settings(scene)
         camera_data = bpy.data.cameras.new("Oz export camera")
@@ -141,7 +169,7 @@ class OZ_OT_export_surfaces(bpy.types.Operator):
         try:
             for index, (obj, poly) in enumerate(faces):
                 wm.progress_update(index)
-                name = face_name(obj, poly, per_object[obj.name])
+                name = names[index]
                 file_base = safe_file_name(name)
                 while file_base in used_names:
                     file_base += "_"
