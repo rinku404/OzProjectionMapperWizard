@@ -25,6 +25,7 @@ dependencies {
     implementation(libs.ktor.serverCio)
     implementation(libs.ktor.serverContentNegotiation)
     implementation(libs.ktor.serverStatusPages)
+    implementation(libs.ktor.serverWebsockets)
     implementation(libs.ktor.serializationKotlinxJson)
 
     testImplementation(libs.kotlin.test)

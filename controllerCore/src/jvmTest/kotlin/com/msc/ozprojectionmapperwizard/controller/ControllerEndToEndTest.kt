@@ -1,14 +1,23 @@
 package com.msc.ozprojectionmapperwizard.controller
 
+import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
+import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
+import com.msc.ozprojectionmapperwizard.core.protocol.TestPattern
+import com.msc.ozprojectionmapperwizard.player.LiveSession
 import com.msc.ozprojectionmapperwizard.player.Pairing
 import com.msc.ozprojectionmapperwizard.player.PlatformInfo
 import com.msc.ozprojectionmapperwizard.player.PlaybackDirector
 import com.msc.ozprojectionmapperwizard.player.PlayerClock
 import com.msc.ozprojectionmapperwizard.player.PlayerServer
 import com.msc.ozprojectionmapperwizard.player.PlayerStorage
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -25,7 +34,8 @@ class ControllerEndToEndTest {
     private val pairing = Pairing(storage)
     private val clock = PlayerClock(storage)
     private val director = PlaybackDirector(storage, clock)
-    private val server = PlayerServer(storage, pairing, clock, director, FakeProjector)
+    private val live = LiveSession()
+    private val server = PlayerServer(storage, pairing, clock, director, FakeProjector, live)
     private val port = ServerSocket(0).use { it.localPort }
     private val address = PlayerAddress("127.0.0.1", port)
     private val store = MemoryStore()
@@ -101,6 +111,40 @@ class ControllerEndToEndTest {
         assertEquals("10.0.0.9", KnownPlayers(store).byId(player.deviceId)!!.host)
         reloaded.forget(player.deviceId)
         assertEquals(emptyList(), KnownPlayers(store).players.value)
+    }
+
+    @Test
+    fun liveAlignmentReachesThePlayerAndEndsWithTheConnection() = runBlocking {
+        val player = KnownPlayers(store).pair(address, pairing.pin, "pc")
+        val client = player.client()
+        var project = Mapping.forPlayer(client.project(), client.info())
+        val (withSurface, surfaceId) = Mapping.addSurface(project, player.deviceId)
+        project = withSurface
+        val states = MutableStateFlow(Mapping.liveState(project, player.deviceId, TestPattern.GRID, surfaceId, 0))
+
+        val link = launch { client.live(states, minIntervalMillis = 0) }
+        withTimeout(5_000) { live.state.filterNotNull().first { it.selectedSurface == surfaceId } }
+        assertTrue(client.info().live)
+
+        // Only the newest frame matters.
+        project = Mapping.moveCorner(project, player.deviceId, surfaceId, 0, Vec2(10.0, 20.0))
+        states.value = Mapping.liveState(project, player.deviceId, TestPattern.WHITE, surfaceId, 0)
+        val latest = withTimeout(5_000) { live.state.filterNotNull().first { it.pattern == TestPattern.WHITE } }
+        assertEquals(Vec2(10.0, 20.0), Mapping.corners(latest.mapping.surfaces.single())[0])
+
+        link.cancel()
+        withTimeout(5_000) { live.state.first { it == null } }
+        assertEquals(false, client.info().live)
+
+        // The project is kept on the player for every controller.
+        client.saveProject(project)
+        assertEquals(project, client.project())
+    }
+
+    @Test
+    fun liveNeedsPairing() = runBlocking {
+        val error = assertFailsWith<PlayerException> { PlayerClient(address, "bad").live(MutableStateFlow(null as LiveState?).filterNotNull()) }
+        assertEquals(401, error.status)
     }
 
     @Test

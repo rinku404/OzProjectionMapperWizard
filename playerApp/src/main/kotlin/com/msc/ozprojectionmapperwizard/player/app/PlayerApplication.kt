@@ -1,6 +1,7 @@
 package com.msc.ozprojectionmapperwizard.player.app
 
 import android.app.Application
+import com.msc.ozprojectionmapperwizard.player.LiveSession
 import com.msc.ozprojectionmapperwizard.player.Pairing
 import com.msc.ozprojectionmapperwizard.player.PlaybackDirector
 import com.msc.ozprojectionmapperwizard.player.PlayerClock
@@ -22,6 +23,7 @@ class PlayerApplication : Application() {
         private set
     lateinit var server: PlayerServer
         private set
+    val live = LiveSession()
 
     override fun onCreate() {
         super.onCreate()
@@ -29,7 +31,7 @@ class PlayerApplication : Application() {
         pairing = Pairing(storage)
         val clock = PlayerClock(storage)
         director = PlaybackDirector(storage, clock)
-        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage))
+        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage), live)
         director.start(scope)
     }
 }

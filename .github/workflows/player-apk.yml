@@ -4,7 +4,7 @@ name: Player APK
 # touches it, so the projector can download the latest build from its browser without adb.
 on:
   push:
-    branches: [master, player-app]
+    branches: ['**']
     paths: ['core/**', 'playerCore/**', 'playerApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/player-apk.yml']
   workflow_dispatch:
 
