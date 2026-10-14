@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +31,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -40,10 +42,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.msc.ozprojectionmapperwizard.controller.KnownPlayer
 import com.msc.ozprojectionmapperwizard.controller.Mapping
-import com.msc.ozprojectionmapperwizard.core.geometry.Homography
+import com.msc.ozprojectionmapperwizard.core.geometry.corners
+import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ProjectorMapping
+import com.msc.ozprojectionmapperwizard.core.model.Warp
 import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.TestPattern
 import kotlinx.coroutines.CancellationException
@@ -54,6 +58,10 @@ import kotlinx.coroutines.launch
 
 private val CORNER_NAMES = listOf("Top left", "Top right", "Bottom right", "Bottom left")
 private val CORNER_ARROWS = listOf("↖", "↗", "↘", "↙")
+
+// Quads name their corners; surfaces from Blender can have any number, so those are numbered.
+private fun cornerLabel(i: Int, count: Int) = if (count == 4) CORNER_ARROWS[i] else "${i + 1}"
+private fun cornerName(i: Int, count: Int) = if (count == 4) CORNER_NAMES[i] else "Corner ${i + 1}"
 
 /** Live alignment: drag surfaces and corners here and the projector redraws them on the wall. */
 @Composable
@@ -195,18 +203,20 @@ fun MappingEditor(player: KnownPlayer, onDone: () -> Unit) {
             )
 
             Text("Fine-tune a corner", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CORNER_ARROWS.forEachIndexed { i, name ->
+            val cornerCount = Mapping.corners(surface).size
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                (0 until cornerCount).forEach { i ->
+                    val name = cornerLabel(i, cornerCount)
                     if (i == selectedCorner) Button(onClick = {}) { Text(name) }
                     else OutlinedButton(onClick = { selectedCorner = i }) { Text(name) }
                 }
             }
-            val corner = selectedCorner
+            val corner = selectedCorner?.takeIf { it < cornerCount }
             if (corner != null) {
                 val at = Mapping.corners(surface)[corner]
                 fun nudge(dx: Double, dy: Double) =
                     edit { Mapping.moveCorner(it, player.deviceId, surface.id, corner, Vec2(at.x + dx * step, at.y + dy * step)) }
-                Text("${CORNER_NAMES[corner]} at ${at.x.toInt()}, ${at.y.toInt()}")
+                Text("${cornerName(corner, cornerCount)} at ${at.x.toInt()}, ${at.y.toInt()}")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { nudge(-1.0, 0.0) }) { Text("←") }
                     OutlinedButton(onClick = { nudge(0.0, -1.0) }) { Text("↑") }
@@ -282,9 +292,9 @@ private fun MappingCanvas(
             val corners = Mapping.corners(surface)
             val selected = surface.id == selectedSurface
             val color = if (selected) Color(0xFFFFC400) else SURFACE_COLORS[index % SURFACE_COLORS.size]
-            drawSurface(corners, scale, color, selected)
+            drawSurface(surface.warp, scale, color, selected)
             val name = project.scene.faces.firstOrNull { it.id == surface.faceId }?.name ?: surface.id
-            val centre = corners.reduce { a, b -> a + b } * 0.25
+            val centre = corners.reduce { a, b -> a + b } * (1.0 / corners.size)
             val layout = textMeasurer.measure(name, TextStyle(color = Color.White, fontSize = 12.sp))
             drawText(layout, topLeft = Offset(centre.x.toFloat() * scale - layout.size.width / 2, centre.y.toFloat() * scale - layout.size.height / 2))
             corners.forEachIndexed { i, p ->
@@ -300,8 +310,9 @@ private fun MappingCanvas(
     }
 }
 
-/** Outline plus a perspective grid: straight lines stay straight under a homography, so mapping the ends is exact. */
-private fun DrawScope.drawSurface(corners: List<Vec2>, scale: Float, color: Color, selected: Boolean) {
+/** Outline plus the face's grid as the projector will warp it. */
+private fun DrawScope.drawSurface(warp: Warp, scale: Float, color: Color, selected: Boolean) {
+    val corners = warp.corners
     fun Vec2.px() = Offset(x.toFloat() * scale, y.toFloat() * scale)
     val outline = Path().apply {
         moveTo(corners[0].px().x, corners[0].px().y)
@@ -309,12 +320,17 @@ private fun DrawScope.drawSurface(corners: List<Vec2>, scale: Float, color: Colo
         close()
     }
     drawPath(outline, color.copy(alpha = 0.18f))
-    val h = runCatching { Homography.unitSquareTo(corners) }.getOrNull()
-    if (h != null) {
-        for (i in 1 until 8) {
-            val t = i / 8.0
-            drawLine(color.copy(alpha = 0.5f), h.map(Vec2(t, 0.0)).px(), h.map(Vec2(t, 1.0)).px(), 1f)
-            drawLine(color.copy(alpha = 0.5f), h.map(Vec2(0.0, t)).px(), h.map(Vec2(1.0, t)).px(), 1f)
+    val grid = warp.polygonWarp()?.takeIf { it.isValid() }
+    if (grid != null) {
+        // Grid lines are clipped to the outline; on a polygon they can bend where triangles meet.
+        clipPath(outline) {
+            grid.gridLines(8).forEach { line ->
+                val path = Path().apply {
+                    moveTo(line[0].px().x, line[0].px().y)
+                    line.drop(1).forEach { lineTo(it.px().x, it.px().y) }
+                }
+                drawPath(path, color.copy(alpha = 0.5f), style = Stroke(1f))
+            }
         }
     }
     drawPath(outline, color, style = Stroke(if (selected) 3f else 2f))

@@ -1,6 +1,9 @@
 package com.msc.ozprojectionmapperwizard.controller
 
-import com.msc.ozprojectionmapperwizard.core.geometry.Homography
+import com.msc.ozprojectionmapperwizard.core.geometry.corners
+import com.msc.ozprojectionmapperwizard.core.geometry.isInside
+import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
+import com.msc.ozprojectionmapperwizard.core.geometry.withCorners
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.model.Face
 import com.msc.ozprojectionmapperwizard.core.model.Output
@@ -76,13 +79,15 @@ object Mapping {
     fun renameFace(project: Project, faceId: String, name: String): Project =
         project.copy(scene = project.scene.copy(faces = project.scene.faces.map { if (it.id == faceId) it.copy(name = name) else it }))
 
-    fun corners(surface: Surface): List<Vec2> = (surface.warp as Warp.Quad).corners
+    fun corners(surface: Surface): List<Vec2> = surface.warp.corners
 
-    /** Moves one corner, kept inside the projector's image. Refuses moves that would fold the quad. */
+    /** Moves one corner, kept inside the projector's image. Refuses moves that would fold the surface. */
     fun moveCorner(project: Project, projectorId: String, surfaceId: String, corner: Int, to: Vec2): Project =
         project.updateSurface(projectorId, surfaceId) { surface, output ->
             val moved = corners(surface).toMutableList().also { it[corner] = clamp(to, output) }
-            if (isConvex(moved)) surface.copy(warp = Warp.Quad(moved)) else surface
+            val warp = surface.warp.withCorners(moved)
+            val ok = if (warp is Warp.Quad) isConvex(moved) else warp.polygonWarp()?.isValid() == true
+            if (ok) surface.copy(warp = warp) else surface
         }
 
     /** Moves the whole surface by [delta], stopping at the image edges. */
@@ -91,14 +96,14 @@ object Mapping {
             val c = corners(surface)
             val dx = delta.x.coerceIn(-c.minOf { it.x }, output.width - c.maxOf { it.x })
             val dy = delta.y.coerceIn(-c.minOf { it.y }, output.height - c.maxOf { it.y })
-            surface.copy(warp = Warp.Quad(c.map { Vec2(it.x + dx, it.y + dy) }))
+            surface.copy(warp = surface.warp.withCorners(c.map { Vec2(it.x + dx, it.y + dy) }))
         }
 
     /** The corner of any surface within [radius] of [point], preferring [preferredSurface]. */
     fun cornerAt(mapping: ProjectorMapping, point: Vec2, radius: Double, preferredSurface: String? = null): Pair<String, Int>? {
         val ordered = mapping.surfaces.sortedByDescending { it.id == preferredSurface }
         for (surface in ordered) {
-            val corners = corners(surface)
+            val corners = corners(surface).ifEmpty { continue }
             val best = corners.indices.minBy { distance(corners[it], point) }
             if (distance(corners[best], point) <= radius) return surface.id to best
         }
@@ -107,11 +112,7 @@ object Mapping {
 
     /** The top-most surface containing [point]. */
     fun surfaceAt(mapping: ProjectorMapping, point: Vec2): String? =
-        mapping.surfaces.lastOrNull { surface ->
-            val inv = runCatching { Homography.unitSquareTo(corners(surface)).inverse() }.getOrNull() ?: return@lastOrNull false
-            val p = inv.map(point)
-            p.x in 0.0..1.0 && p.y in 0.0..1.0
-        }?.id
+        mapping.surfaces.lastOrNull { surface -> corners(surface).let { it.size >= 3 && point.isInside(it) } }?.id
 
     fun liveState(
         project: Project,
@@ -148,8 +149,7 @@ object Mapping {
         return mapping.copy(
             output = output,
             surfaces = mapping.surfaces.map { s ->
-                val warp = s.warp
-                if (warp is Warp.Quad) s.copy(warp = Warp.Quad(warp.corners.map { Vec2(it.x * sx, it.y * sy) })) else s
+                s.copy(warp = s.warp.withCorners(s.warp.corners.map { Vec2(it.x * sx, it.y * sy) }))
             },
         )
     }

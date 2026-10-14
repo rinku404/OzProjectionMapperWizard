@@ -5,8 +5,11 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
+import com.msc.ozprojectionmapperwizard.core.geometry.corners
+import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.model.Warp
 import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.TestPattern
@@ -40,24 +43,29 @@ class LiveView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
         canvas.scale(width.toFloat() / output.width, height.toFloat() / output.height)
 
         state.mapping.surfaces.forEachIndexed { index, surface ->
-            val quad = surface.warp as? Warp.Quad ?: return@forEachIndexed
             val selected = surface.id == state.selectedSurface
             val color = if (selected) Color.rgb(255, 196, 0) else PALETTE[index % PALETTE.size]
+            val name = state.faceNames[surface.faceId] ?: surface.id
+            val quad = surface.warp as? Warp.Quad
+            if (quad == null) {
+                drawPolygon(canvas, surface.warp, state.pattern, color, name, selected)
+                return@forEachIndexed
+            }
             val dst = FloatArray(8).also { a -> quad.corners.forEachIndexed { i, p -> a[2 * i] = p.x.toFloat(); a[2 * i + 1] = p.y.toFloat() } }
             matrix.setPolyToPoly(SRC, 0, dst, 0, 4)
 
             canvas.save()
             canvas.concat(matrix)
-            drawPattern(canvas, state.pattern, color, state.faceNames[surface.faceId] ?: surface.id, selected)
+            drawPattern(canvas, state.pattern, color, name, selected)
             canvas.restore()
         }
 
         // Crosshair in output space so it stays sharp and the same size wherever the corner is.
         val selectedSurface = state.mapping.surfaces.firstOrNull { it.id == state.selectedSurface }
         val corner = state.selectedCorner
-        val quad = selectedSurface?.warp as? Warp.Quad
-        if (quad != null && corner != null && corner in quad.corners.indices) {
-            val p = quad.corners[corner]
+        val corners = selectedSurface?.warp?.corners.orEmpty()
+        if (corner != null && corner in corners.indices) {
+            val p = corners[corner]
             val x = p.x.toFloat()
             val y = p.y.toFloat()
             line.color = Color.RED
@@ -67,6 +75,53 @@ class LiveView @JvmOverloads constructor(context: Context, attrs: AttributeSet? 
             canvas.drawCircle(x, y, 12f, line)
         }
         canvas.restore()
+    }
+
+    /**
+     * A surface with any number of corners, drawn in output space: its outline filled, and the
+     * face's grid mapped through the same warp the rendered show uses.
+     */
+    private fun drawPolygon(canvas: Canvas, warp: Warp, pattern: TestPattern, color: Int, name: String, selected: Boolean) {
+        val corners = warp.corners
+        if (corners.size < 3) return
+        val outline = Path().apply {
+            moveTo(corners[0].x.toFloat(), corners[0].y.toFloat())
+            corners.drop(1).forEach { lineTo(it.x.toFloat(), it.y.toFloat()) }
+            close()
+        }
+        when (pattern) {
+            TestPattern.WHITE -> {
+                fill.color = if (selected) Color.rgb(255, 240, 200) else Color.WHITE
+                canvas.drawPath(outline, fill)
+            }
+            TestPattern.GRID -> {
+                fill.color = Color.argb(70, Color.red(color), Color.green(color), Color.blue(color))
+                canvas.drawPath(outline, fill)
+                val grid = warp.polygonWarp()?.takeIf { it.isValid() }
+                if (grid != null) {
+                    canvas.save()
+                    canvas.clipPath(outline)
+                    line.color = color
+                    line.strokeWidth = 2f
+                    grid.gridLines(GRID).forEach { points ->
+                        val path = Path().apply {
+                            moveTo(points[0].x.toFloat(), points[0].y.toFloat())
+                            points.drop(1).forEach { lineTo(it.x.toFloat(), it.y.toFloat()) }
+                        }
+                        canvas.drawPath(path, line)
+                    }
+                    canvas.restore()
+                }
+                val cx = corners.sumOf { it.x }.toFloat() / corners.size
+                val cy = corners.sumOf { it.y }.toFloat() / corners.size
+                text.textSize = 28f
+                canvas.drawText(name, cx, cy, text)
+            }
+            TestPattern.OUTLINE -> Unit
+        }
+        line.color = color
+        line.strokeWidth = if (selected) 6f else 4f
+        canvas.drawPath(outline, line)
     }
 
     /** Draws in the unit face space (0..UNIT on both axes, before the corner-pin matrix). */

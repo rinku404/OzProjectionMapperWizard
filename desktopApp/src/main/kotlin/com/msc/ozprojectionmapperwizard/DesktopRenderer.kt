@@ -1,6 +1,8 @@
 package com.msc.ozprojectionmapperwizard
 
+import com.msc.ozprojectionmapperwizard.controller.BlenderImport
 import com.msc.ozprojectionmapperwizard.controller.KeyValueStore
+import com.msc.ozprojectionmapperwizard.controller.LoadedExport
 import com.msc.ozprojectionmapperwizard.controller.PickedVideo
 import com.msc.ozprojectionmapperwizard.controller.RenderException
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
@@ -45,6 +47,29 @@ class DesktopRenderer(private val store: KeyValueStore, private val home: File) 
             store.put(KEY_PREFIX + item.id, file.absolutePath)
             item
         }
+    }
+
+    override suspend fun importBlender(onStep: (RenderStep) -> Unit): LoadedExport? {
+        val file = withContext(Dispatchers.Main) {
+            val dialog = FileDialog(null as Frame?, "Choose oz-surfaces.json from the Blender export", FileDialog.LOAD)
+            dialog.file = BlenderImport.FILE_NAME
+            dialog.setFilenameFilter { _, name -> name.endsWith(".json", ignoreCase = true) }
+            dialog.isVisible = true
+            dialog.files.firstOrNull()
+        } ?: return null
+        val export = withContext(Dispatchers.IO) { BlenderImport.parse(file.readText()) }
+        val render = tools(onStep)
+        val media = withContext(Dispatchers.IO) {
+            export.surfaces.associate { surface ->
+                val rendered = File(file.parentFile, surface.media)
+                if (!rendered.isFile) throw RenderException("${surface.media} is missing next to ${file.name}.")
+                onStep(RenderStep("Reading ${surface.media}…"))
+                val item = render.probe(rendered)
+                store.put(KEY_PREFIX + item.id, rendered.absolutePath)
+                surface.name to item
+            }
+        }
+        return LoadedExport(export, media)
     }
 
     override fun hasMedia(mediaId: String): Boolean = fileOf(mediaId)?.isFile == true

@@ -125,6 +125,14 @@ sealed interface Warp {
     @SerialName("quad")
     data class Quad(val corners: List<Vec2>) : Warp
 
+    /**
+     * A flat surface with any number of corners (3 or more), as exported from Blender: [source] is
+     * the outline in the media image (0..1), [corners] the same corners in output pixels.
+     */
+    @Serializable
+    @SerialName("polygon")
+    data class Polygon(val corners: List<Vec2>, val source: List<Vec2>) : Warp
+
     /** Grid of control points in output pixels, row-major, for curved or uneven surfaces. */
     @Serializable
     @SerialName("mesh")
