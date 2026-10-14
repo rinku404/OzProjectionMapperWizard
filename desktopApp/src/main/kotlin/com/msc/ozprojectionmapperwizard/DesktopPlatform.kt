@@ -1,15 +1,20 @@
 package com.msc.ozprojectionmapperwizard
 
+import com.msc.ozprojectionmapperwizard.controller.AppUpdates
 import com.msc.ozprojectionmapperwizard.controller.ChunkSource
 import com.msc.ozprojectionmapperwizard.controller.DiscoveredPlayer
 import com.msc.ozprojectionmapperwizard.controller.KeyValueStore
 import com.msc.ozprojectionmapperwizard.controller.PickedVideo
 import com.msc.ozprojectionmapperwizard.controller.PlayerAddress
 import com.msc.ozprojectionmapperwizard.controller.PlayerDiscovery
+import com.msc.ozprojectionmapperwizard.controller.SendProgress
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
+import com.msc.ozprojectionmapperwizard.core.update.Releases
+import com.msc.ozprojectionmapperwizard.core.update.Update
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
@@ -26,6 +31,7 @@ import java.util.TimeZone
 import javax.jmdns.JmmDNS
 import javax.jmdns.ServiceEvent
 import javax.jmdns.ServiceListener
+import kotlin.system.exitProcess
 
 class DesktopPlatform : ControllerPlatform {
     override val deviceName: String =
@@ -50,6 +56,28 @@ class DesktopPlatform : ControllerPlatform {
     }
 
     override fun clock() = ClockSync(System.currentTimeMillis(), TimeZone.getDefault().id)
+
+    // Written into the app by the build (CI's run number); 0 when run from the IDE.
+    override val appBuild: Int =
+        javaClass.getResource("/oz-build.txt")?.readText()?.trim()?.toIntOrNull() ?: 0
+
+    override val updateApp: Releases.App? =
+        if (System.getProperty("os.name").orEmpty().startsWith("Windows") && appBuild > 0) Releases.App.CONTROLLER_WINDOWS else null
+
+    /** Downloads the new installer, starts it and closes this app so its files can be replaced. */
+    override suspend fun installUpdate(update: Update, onProgress: (SendProgress) -> Unit) {
+        withContext(Dispatchers.IO) { downloadAndRun(update, onProgress) }
+    }
+
+    private suspend fun downloadAndRun(update: Update, onProgress: (SendProgress) -> Unit) {
+        val msi = File(System.getProperty("java.io.tmpdir"), "oz-controller-${update.build}.msi")
+        msi.outputStream().buffered().use { out ->
+            AppUpdates().download(update.downloadUrl, { bytes, n -> out.write(bytes, 0, n) }, onProgress)
+        }
+        ProcessBuilder("msiexec", "/i", msi.absolutePath).start()
+        delay(1_500)
+        exitProcess(0)
+    }
 
     private fun mdnsPlayers(): Flow<List<DiscoveredPlayer>> = callbackFlow {
         val type = PlayerProtocol.SERVICE_TYPE + ".local."

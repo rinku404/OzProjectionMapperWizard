@@ -5,6 +5,8 @@ import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
 import com.msc.ozprojectionmapperwizard.core.protocol.TestPattern
+import com.msc.ozprojectionmapperwizard.core.update.Releases
+import com.msc.ozprojectionmapperwizard.player.AppUpdater
 import com.msc.ozprojectionmapperwizard.player.LiveSession
 import com.msc.ozprojectionmapperwizard.player.Pairing
 import com.msc.ozprojectionmapperwizard.player.PlatformInfo
@@ -35,7 +37,8 @@ class ControllerEndToEndTest {
     private val clock = PlayerClock(storage)
     private val director = PlaybackDirector(storage, clock)
     private val live = LiveSession()
-    private val server = PlayerServer(storage, pairing, clock, director, FakeProjector, live)
+    private val updater = FakeUpdater()
+    private val server = PlayerServer(storage, pairing, clock, director, FakeProjector, live, updater)
     private val port = ServerSocket(0).use { it.localPort }
     private val address = PlayerAddress("127.0.0.1", port)
     private val store = MemoryStore()
@@ -145,6 +148,30 @@ class ControllerEndToEndTest {
     fun liveNeedsPairing() = runBlocking {
         val error = assertFailsWith<PlayerException> { PlayerClient(address, "bad").live(MutableStateFlow(null as LiveState?).filterNotNull()) }
         assertEquals(401, error.status)
+    }
+
+    @Test
+    fun theControllerCanUpdateThePlayerFromTrustedReleasesOnly() = runBlocking {
+        val client = KnownPlayers(store).pair(address, pairing.pin, "pc").client()
+        assertEquals(3, client.info().appBuild)
+        val url = "${Releases.DOWNLOAD_PREFIX}player-v0.1.9/oz-player.apk"
+        val info = client.updateApp(url, 9)
+        assertEquals(listOf(url to 9), updater.requests)
+        assertEquals("Downloading build 9", info.updateStatus)
+
+        val error = assertFailsWith<PlayerException> { client.updateApp("https://example.com/evil.apk", 99) }
+        assertEquals(400, error.status)
+        assertEquals(1, updater.requests.size)
+    }
+
+    private class FakeUpdater : AppUpdater {
+        val requests = mutableListOf<Pair<String, Int>>()
+        override val appBuild = 3
+        override var status: String? = null
+        override fun install(downloadUrl: String, build: Int) {
+            requests += downloadUrl to build
+            status = "Downloading build $build"
+        }
     }
 
     @Test

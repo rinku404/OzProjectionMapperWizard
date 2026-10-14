@@ -9,13 +9,18 @@ import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
+import com.msc.ozprojectionmapperwizard.controller.AppUpdates
 import com.msc.ozprojectionmapperwizard.controller.DiscoveredPlayer
 import com.msc.ozprojectionmapperwizard.controller.KeyValueStore
 import com.msc.ozprojectionmapperwizard.controller.PickedVideo
 import com.msc.ozprojectionmapperwizard.controller.PlayerAddress
 import com.msc.ozprojectionmapperwizard.controller.PlayerDiscovery
+import com.msc.ozprojectionmapperwizard.controller.SendProgress
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
+import com.msc.ozprojectionmapperwizard.core.update.Releases
+import com.msc.ozprojectionmapperwizard.core.update.Update
+import java.io.File
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -64,6 +69,22 @@ class AndroidPlatform(private val activity: ComponentActivity) : ControllerPlatf
     }
 
     override fun clock() = ClockSync(System.currentTimeMillis(), TimeZone.getDefault().id)
+
+    override val appBuild: Int = runCatching {
+        val info = context.packageManager.getPackageInfo(context.packageName, 0)
+        @Suppress("DEPRECATION")
+        if (Build.VERSION.SDK_INT >= 28) info.longVersionCode.toInt() else info.versionCode
+    }.getOrDefault(0)
+
+    override val updateApp = Releases.App.CONTROLLER_ANDROID
+
+    override suspend fun installUpdate(update: Update, onProgress: (SendProgress) -> Unit) = withContext(Dispatchers.IO) {
+        val apk = File(context.cacheDir, "update.apk")
+        apk.outputStream().buffered().use { out ->
+            AppUpdates().download(update.downloadUrl, { bytes, n -> out.write(bytes, 0, n) }, onProgress)
+        }
+        ApkInstaller.install(context, apk)
+    }
 
     private fun describe(uri: Uri): PickedVideo {
         val resolver = context.contentResolver

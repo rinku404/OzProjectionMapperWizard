@@ -24,6 +24,8 @@ class PlayerApplication : Application() {
     lateinit var server: PlayerServer
         private set
     val live = LiveSession()
+    lateinit var updater: AndroidUpdater
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -31,7 +33,8 @@ class PlayerApplication : Application() {
         pairing = Pairing(storage)
         val clock = PlayerClock(storage)
         director = PlaybackDirector(storage, clock)
-        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage), live)
+        updater = AndroidUpdater(this, scope)
+        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage), live, updater)
         director.start(scope)
     }
 }

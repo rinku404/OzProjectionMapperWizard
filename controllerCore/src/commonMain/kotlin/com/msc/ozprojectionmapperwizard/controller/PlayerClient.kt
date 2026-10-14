@@ -10,6 +10,7 @@ import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
+import com.msc.ozprojectionmapperwizard.core.protocol.UpdateRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.UploadStatus
 import com.msc.ozprojectionmapperwizard.core.schedule.Schedule
 import io.ktor.client.HttpClient
@@ -114,6 +115,15 @@ class PlayerClient(
     suspend fun play(showId: String): DeviceInfo = http.post("${address.baseUrl}/play/$showId") { auth() }.ok().body()
 
     suspend fun black(): DeviceInfo = http.post("${address.baseUrl}/black") { auth() }.ok().body()
+
+    /** Asks the player to download and install another build of itself. */
+    suspend fun updateApp(downloadUrl: String, build: Int): DeviceInfo {
+        val response = http.post("${address.baseUrl}/update") { auth(); json(UpdateRequest(downloadUrl, build)) }
+        if (response.status == HttpStatusCode.NotFound || response.status == HttpStatusCode.NotImplemented) {
+            throw PlayerException(response.status.value, "This projector's app is too old to update itself. Install the new one by hand once.")
+        }
+        return response.ok().body()
+    }
 
     suspend fun resume(): DeviceInfo = http.post("${address.baseUrl}/resume") { auth() }.ok().body()
 

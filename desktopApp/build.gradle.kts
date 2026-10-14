@@ -16,6 +16,18 @@ dependencies {
     implementation(libs.compose.uiToolingPreview)
 }
 
+// CI's run number, baked into the app so it can tell whether a release is newer.
+val ciBuildNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").map { it.toInt() }.getOrElse(0)
+
+val writeBuildInfo = tasks.register("writeBuildInfo") {
+    val out = layout.buildDirectory.dir("generated/build-info")
+    val number = ciBuildNumber
+    inputs.property("build", number)
+    outputs.dir(out)
+    doLast { out.get().file("oz-build.txt").asFile.writeText(number.toString()) }
+}
+sourceSets["main"].resources.srcDir(writeBuildInfo)
+
 compose.desktop {
     application {
         mainClass = "com.msc.ozprojectionmapperwizard.MainKt"
@@ -24,7 +36,7 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "OzProjection"
             // CI numbers each build so a newer installer upgrades the old one.
-            packageVersion = "1.0.${providers.environmentVariable("GITHUB_RUN_NUMBER").getOrElse("0")}"
+            packageVersion = "1.0.$ciBuildNumber"
             // jmDNS and Ktor need JDK modules beyond Compose's default minimal runtime.
             includeAllModules = true
 

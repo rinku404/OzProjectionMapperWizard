@@ -10,7 +10,9 @@ import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
+import com.msc.ozprojectionmapperwizard.core.protocol.UpdateRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.UploadStatus
+import com.msc.ozprojectionmapperwizard.core.update.Releases
 import com.msc.ozprojectionmapperwizard.core.schedule.Schedule
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
@@ -64,6 +66,7 @@ class PlayerServer(
     private val director: PlaybackDirector,
     private val platform: PlatformInfo,
     private val live: LiveSession = LiveSession(),
+    private val updater: AppUpdater? = null,
 ) {
     private var engine: EmbeddedServer<*, *>? = null
 
@@ -190,6 +193,16 @@ class PlayerServer(
                     director.black()
                     call.respond(info())
                 }
+                post("/update") {
+                    val request = call.receive<UpdateRequest>()
+                    require(Releases.isTrustedDownload(request.downloadUrl)) { "Updates only come from this app's GitHub releases" }
+                    if (updater == null) {
+                        call.respond(HttpStatusCode.NotImplemented, ApiError("This player can't update itself"))
+                    } else {
+                        updater.install(request.downloadUrl, request.build)
+                        call.respond(HttpStatusCode.Accepted, info())
+                    }
+                }
                 post("/resume") {
                     director.resumeSchedule()
                     call.respond(info())
@@ -211,6 +224,8 @@ class PlayerServer(
         shows = storage.shows(),
         nowPlaying = director.playback.value.nowPlaying,
         live = live.isLive,
+        appBuild = updater?.appBuild ?: 0,
+        updateStatus = updater?.status,
     )
 
     private companion object {
