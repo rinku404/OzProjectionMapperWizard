@@ -47,7 +47,10 @@ import com.msc.ozprojectionmapperwizard.controller.SendProgress
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
+import com.msc.ozprojectionmapperwizard.controller.AppUpdates
+import com.msc.ozprojectionmapperwizard.core.update.Releases
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -148,6 +151,9 @@ private fun ProjectorList(platform: ControllerPlatform, known: KnownPlayers, onO
 
         busy?.let { Text(it) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        HorizontalDivider()
+        UpdatesCard(platform)
     }
 
     pairing?.let { address ->
@@ -226,11 +232,14 @@ private fun ProjectorScreen(
     var progress by remember { mutableStateOf<SendProgress?>(null) }
     var busy by remember { mutableStateOf(false) }
     var confirmForget by remember { mutableStateOf(false) }
+    var watchingUpdate by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
 
     fun act(label: String, action: suspend () -> DeviceInfo?) {
         if (busy) return
         busy = true
         error = null
+        notice = null
         status = label
         scope.launch {
             try {
@@ -249,6 +258,21 @@ private fun ProjectorScreen(
     }
 
     LaunchedEffect(player) { act("Connecting…") { client.info() } }
+
+    // While the projector updates itself, show its progress until it restarts or finishes.
+    LaunchedEffect(watchingUpdate) {
+        if (!watchingUpdate) return@LaunchedEffect
+        repeat(90) {
+            delay(2_000)
+            val latest = runCatching { client.info() }.getOrNull()
+            if (latest != null) info = latest
+            if (latest != null && latest.updateStatus == null) {
+                watchingUpdate = false
+                return@LaunchedEffect
+            }
+        }
+        watchingUpdate = false
+    }
 
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -289,6 +313,26 @@ private fun ProjectorScreen(
         }
         status?.let { Text(it) }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+
+        info?.let { device ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Projector app: build ${device.appBuild}", modifier = Modifier.weight(1f))
+                OutlinedButton(enabled = !busy, onClick = {
+                    act("Checking for a newer projector app…") {
+                        val update = Releases.available(AppUpdates().releases(), Releases.App.PLAYER, device.appBuild, includeTestBuilds(platform.store))
+                        if (update == null) {
+                            notice = "The projector app is up to date."
+                            null
+                        } else {
+                            notice = "The projector is getting build ${update.build}. When it asks, press OK on its remote to install."
+                            client.updateApp(update.downloadUrl, update.build).also { watchingUpdate = true }
+                        }
+                    }
+                }) { Text("Update projector app") }
+            }
+            device.updateStatus?.let { Text(it, fontWeight = FontWeight.SemiBold) }
+            notice?.let { Text(it) }
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(enabled = !busy, onClick = { act("Going black…") { client.black() } }) { Text("Black") }

@@ -19,6 +19,10 @@ dependencies {
     debugImplementation(libs.compose.uiTooling)
 }
 
+val ciBuildNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").map { it.toInt() }.getOrElse(1)
+val ozKeystore: String? = providers.environmentVariable("OZ_KEYSTORE_PATH").orNull
+val ozKeystorePassword: String? = providers.environmentVariable("OZ_KEYSTORE_PASSWORD").orNull
+
 android {
     namespace = "com.msc.ozprojectionmapperwizard"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
@@ -27,8 +31,21 @@ android {
         applicationId = "com.msc.ozprojectionmapperwizard"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "1.0"
+        // CI's run number, which is also in the release tag, so the app can tell which build is newer.
+        versionCode = ciBuildNumber
+        versionName = "0.1.$ciBuildNumber"
+    }
+    signingConfigs {
+        // CI signs every build with the same key (from the repo's secrets), so a new build installs
+        // over the old one. Without it, builds use the usual per-machine debug key.
+        if (ozKeystore != null) {
+            getByName("debug") {
+                storeFile = file(ozKeystore)
+                storePassword = ozKeystorePassword
+                keyAlias = "oz"
+                keyPassword = ozKeystorePassword
+            }
+        }
     }
     packaging {
         resources {

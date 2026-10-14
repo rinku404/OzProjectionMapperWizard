@@ -14,6 +14,9 @@ permissions:
 jobs:
   android:
     runs-on: ubuntu-latest
+    env:
+      OZ_KEYSTORE_BASE64: ${{ secrets.OZ_KEYSTORE_BASE64 }}
+      OZ_KEYSTORE_PASSWORD: ${{ secrets.OZ_KEYSTORE_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -21,6 +24,11 @@ jobs:
           distribution: zulu
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
+      - name: Signing key
+        if: env.OZ_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$OZ_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/oz.jks"
+          echo "OZ_KEYSTORE_PATH=$RUNNER_TEMP/oz.jks" >> "$GITHUB_ENV"
       - name: Test and build
         run: |
           chmod +x gradlew

@@ -3,6 +3,7 @@ package com.msc.ozprojectionmapperwizard.player.app
 import android.app.Activity
 import android.net.Uri
 import android.os.Bundle
+import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
@@ -15,14 +16,20 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
+import com.msc.ozprojectionmapperwizard.core.update.Releases
+import com.msc.ozprojectionmapperwizard.core.update.Update
 import com.msc.ozprojectionmapperwizard.player.Playback
+import com.msc.ozprojectionmapperwizard.player.UpdateDownloads
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** The projected screen: loops the current show, or shows the setup screen with the pairing PIN. */
 class MainActivity : Activity() {
@@ -32,6 +39,11 @@ class MainActivity : Activity() {
     private lateinit var testPattern: View
     private lateinit var setupText: TextView
     private lateinit var liveView: LiveView
+    private lateinit var updateText: TextView
+    /** A newer build found by pressing OK, waiting for a second OK to install. */
+    private var offeredUpdate: Update? = null
+    private var updateCheck: Job? = null
+    private var hideUpdateText: Job? = null
     private var currentFile: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,6 +60,7 @@ class MainActivity : Activity() {
         testPattern = findViewById(R.id.test_pattern)
         setupText = findViewById(R.id.setup_text)
         liveView = findViewById(R.id.live_view)
+        updateText = findViewById(R.id.update_text)
         exo = ExoPlayer.Builder(this).build().apply {
             repeatMode = Player.REPEAT_MODE_ONE
             volume = 0f
@@ -71,12 +84,74 @@ class MainActivity : Activity() {
                 delay(2_000)
             }
         }
+        // Shows update progress, including updates a controller started.
+        scope.launch {
+            while (isActive) {
+                player.updater.status?.let { showUpdateText(it, hideAfterMillis = 0) }
+                delay(1_000)
+            }
+        }
     }
 
     override fun onDestroy() {
         scope.cancel()
         exo.release()
         super.onDestroy()
+    }
+
+    /** OK on the remote checks for a new build; OK again installs it; Back closes the message. */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A -> {
+                val offer = offeredUpdate
+                if (offer != null) {
+                    offeredUpdate = null
+                    player.updater.install(offer.downloadUrl, offer.build)
+                    showUpdateText("Downloading build ${offer.build}…", hideAfterMillis = 0)
+                } else if (updateCheck?.isActive != true && player.updater.status == null) {
+                    checkForUpdate()
+                }
+                return true
+            }
+            KeyEvent.KEYCODE_BACK -> if (updateText.visibility == View.VISIBLE) {
+                offeredUpdate = null
+                player.updater.clearStatus()
+                updateText.visibility = View.GONE
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun checkForUpdate() {
+        val current = player.updater.appBuild
+        showUpdateText("Checking for updates…", hideAfterMillis = 0)
+        updateCheck = scope.launch {
+            try {
+                val releases = withContext(Dispatchers.IO) { UpdateDownloads.fetchReleases() }
+                val update = Releases.available(releases, Releases.App.PLAYER, current, includeTestBuilds = false)
+                if (update == null) {
+                    showUpdateText("Oz Player is up to date (build $current).", hideAfterMillis = 5_000)
+                } else {
+                    offeredUpdate = update
+                    showUpdateText("Build ${update.build} is available (this is build $current).\nPress OK to install, Back to cancel.", hideAfterMillis = 0)
+                }
+            } catch (e: Exception) {
+                showUpdateText("Couldn't check for updates. Is the projector on the internet?\n(${e.message})", hideAfterMillis = 8_000)
+            }
+        }
+    }
+
+    private fun showUpdateText(text: String, hideAfterMillis: Long) {
+        hideUpdateText?.cancel()
+        updateText.text = text
+        updateText.visibility = View.VISIBLE
+        if (hideAfterMillis > 0) {
+            hideUpdateText = scope.launch {
+                delay(hideAfterMillis)
+                updateText.visibility = View.GONE
+            }
+        }
     }
 
     private fun show(playback: Playback) {
@@ -104,7 +179,7 @@ class MainActivity : Activity() {
     private fun updateSetupText(playback: Playback) {
         if (playback.nowPlaying.reason != PlayReason.NO_SHOW) return
         val address = localAddress()?.let { "http://$it:${PlayerProtocol.DEFAULT_PORT}" } ?: "Not connected to Wi-Fi"
-        setupText.text = "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\nWaiting for a show"
+        setupText.text = "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\nWaiting for a show\n\nPress OK on the remote to check for updates"
     }
 
     private fun localAddress(): String? =

@@ -18,6 +18,8 @@ import kotlinx.serialization.Serializable
  * - `POST /play/{showId}`, `POST /black`, `POST /resume` (back to the schedule)
  * - `GET|PUT /project` the mapping [com.msc.ozprojectionmapperwizard.core.model.Project] kept on the player, so
  *   every controller edits the same one (404 until one is saved)
+ * - `POST /update` [UpdateRequest]: the player downloads that build of itself and asks for
+ *   confirmation on screen (press OK on the remote)
  * - `WS /live` live alignment: the controller sends [LiveState] frames, the player draws them over
  *   everything until the socket closes, then goes back to the scheduled show
  */
@@ -44,7 +46,15 @@ data class DeviceInfo(
     val nowPlaying: NowPlaying,
     /** A controller is aligning the mapping right now. */
     val live: Boolean = false,
+    /** The player app's build number (0 for builds not made by CI). */
+    val appBuild: Int = 0,
+    /** Progress of an app update, in words, or null when none is running. */
+    val updateStatus: String? = null,
 )
+
+/** Asks the player to install build [build] of itself from [downloadUrl] (one of this repository's releases). */
+@Serializable
+data class UpdateRequest(val downloadUrl: String, val build: Int)
 
 @Serializable
 data class NowPlaying(val showId: String?, val reason: PlayReason)
