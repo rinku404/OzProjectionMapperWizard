@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Oz Projection Player</string>
+    <string name="service_channel">Player</string>
+    <string name="service_running">Ready for shows on this network</string>
+</resources>
