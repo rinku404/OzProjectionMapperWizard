@@ -78,6 +78,9 @@ class AndroidPlatform(private val activity: ComponentActivity) : ControllerPlatf
 
     override val updateApp = Releases.App.CONTROLLER_ANDROID
 
+    // Rendering runs on the PC app for now.
+    override val renderer: ShowRenderer? = null
+
     override suspend fun installUpdate(update: Update, onProgress: (SendProgress) -> Unit) = withContext(Dispatchers.IO) {
         val apk = File(context.cacheDir, "update.apk")
         apk.outputStream().buffered().use { out ->

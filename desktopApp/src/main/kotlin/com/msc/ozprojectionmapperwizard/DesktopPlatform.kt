@@ -37,7 +37,11 @@ class DesktopPlatform : ControllerPlatform {
     override val deviceName: String =
         System.getenv("COMPUTERNAME") ?: runCatching { InetAddress.getLocalHost().hostName }.getOrNull() ?: "PC"
 
-    override val store: KeyValueStore = PropertiesStore(File(System.getProperty("user.home"), ".ozprojection/settings.properties"))
+    private val home = File(System.getProperty("user.home"), ".ozprojection")
+
+    override val store: KeyValueStore = PropertiesStore(File(home, "settings.properties"))
+
+    override val renderer: ShowRenderer = DesktopRenderer(store, home)
 
     override val discovery = PlayerDiscovery { mdnsPlayers() }
 
