@@ -27,7 +27,10 @@ jobs:
       - name: Signing key
         if: env.OZ_KEYSTORE_BASE64 != ''
         run: |
-          echo "$OZ_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/oz.jks"
+          # Pasting into the secrets page can add spaces or Windows line endings; drop them.
+          printf '%s' "$OZ_KEYSTORE_BASE64" | tr -d ' \r\n\t' | base64 -d > "$RUNNER_TEMP/oz.jks"
+          keytool -list -keystore "$RUNNER_TEMP/oz.jks" -storepass "$OZ_KEYSTORE_PASSWORD" -alias oz > /dev/null \
+            || { echo "::error::The OZ_KEYSTORE secrets don't open a keystore with an 'oz' key. Check both secrets."; exit 1; }
           echo "OZ_KEYSTORE_PATH=$RUNNER_TEMP/oz.jks" >> "$GITHUB_ENV"
       - name: Test and build
         run: |
