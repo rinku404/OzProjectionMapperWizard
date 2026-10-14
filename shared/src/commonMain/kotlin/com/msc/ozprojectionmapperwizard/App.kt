@@ -43,6 +43,7 @@ import com.msc.ozprojectionmapperwizard.controller.KnownPlayers
 import com.msc.ozprojectionmapperwizard.controller.PlayerAddress
 import com.msc.ozprojectionmapperwizard.controller.PlayerClient
 import com.msc.ozprojectionmapperwizard.controller.PlayerException
+import com.msc.ozprojectionmapperwizard.controller.RenderException
 import com.msc.ozprojectionmapperwizard.controller.SendProgress
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
@@ -58,6 +59,7 @@ fun App(platform: ControllerPlatform) {
     val known = remember { KnownPlayers(platform.store) }
     var openDeviceId by remember { mutableStateOf<String?>(null) }
     var aligning by remember { mutableStateOf(false) }
+    var editingContent by remember { mutableStateOf(false) }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
@@ -67,7 +69,14 @@ fun App(platform: ControllerPlatform) {
                     when {
                         player == null -> ProjectorList(platform, known, onOpen = { openDeviceId = it.deviceId })
                         aligning -> MappingEditor(player, onDone = { aligning = false })
-                        else -> ProjectorScreen(platform, known, player, onBack = { openDeviceId = null }, onAlign = { aligning = true })
+                        editingContent && platform.renderer != null ->
+                            ContentEditor(platform, platform.renderer!!, player, onDone = { editingContent = false })
+                        else -> ProjectorScreen(
+                            platform, known, player,
+                            onBack = { openDeviceId = null },
+                            onAlign = { aligning = true },
+                            onContent = { editingContent = true },
+                        )
                     }
                 }
             }
@@ -223,6 +232,7 @@ private fun ProjectorScreen(
     player: KnownPlayer,
     onBack: () -> Unit,
     onAlign: () -> Unit,
+    onContent: () -> Unit,
 ) {
     val client = remember(player) { player.client() }
     val scope = rememberCoroutineScope()
@@ -305,6 +315,14 @@ private fun ProjectorScreen(
 
         OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = onAlign) {
             Text("Align mapping live on the wall")
+        }
+
+        if (platform.renderer != null) {
+            Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = onContent) {
+                Text("Put videos, GIFs or images on the surfaces")
+            }
+        } else {
+            Text("To put videos, GIFs or images on the surfaces, use the PC app for now.", style = MaterialTheme.typography.bodySmall)
         }
 
         progress?.let { p ->
@@ -400,6 +418,7 @@ private fun nowPlayingText(info: DeviceInfo): String {
 
 internal fun describe(e: Exception, address: PlayerAddress): String = when (e) {
     is PlayerException -> e.message ?: "The projector refused (${e.status})"
+    is RenderException -> e.message ?: "The render failed."
     else -> "Can't reach the projector at $address. Check it's on and on the same Wi-Fi as this device. (${e.message ?: e::class.simpleName})"
 }
 

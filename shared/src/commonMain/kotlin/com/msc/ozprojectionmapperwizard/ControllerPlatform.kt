@@ -18,6 +18,9 @@ interface ControllerPlatform {
     /** Lets the person choose a video and hashes it; null if they cancelled. */
     suspend fun pickVideo(): PickedVideo?
 
+    /** Renders videos, GIFs and images onto the mapping, or null where that isn't possible yet. */
+    val renderer: ShowRenderer?
+
     /** This device's current time and time zone, sent to projectors that have no internet. */
     fun clock(): ClockSync
 
