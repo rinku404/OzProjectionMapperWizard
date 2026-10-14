@@ -1,10 +1,11 @@
 name: Player APK
 
-# Builds the projector player app. Pushing a tag like player-v0.1.0 publishes the APK as a
-# GitHub Release, so the projector can download it from its browser without adb.
+# Builds the projector player app and publishes the APK as a GitHub Release on every push that
+# touches it, so the projector can download the latest build from its browser without adb.
 on:
   push:
-    tags: ['player-v*']
+    branches: [master, player-app]
+    paths: ['core/**', 'playerCore/**', 'playerApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/player-apk.yml']
   workflow_dispatch:
 
 permissions:
@@ -30,8 +31,12 @@ jobs:
           name: oz-player-apk
           path: oz-player.apk
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
+          tag_name: player-v0.1.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Player 0.1.${{ github.run_number }} (${{ github.ref_name }})
+          prerelease: ${{ github.ref_name != 'master' }}
+          make_latest: true
           files: oz-player.apk
           body: |
             Projector player app. On the projector, open this page in the browser, download
