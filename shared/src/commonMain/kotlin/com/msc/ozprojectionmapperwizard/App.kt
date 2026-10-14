@@ -54,16 +54,17 @@ import kotlinx.coroutines.launch
 fun App(platform: ControllerPlatform) {
     val known = remember { KnownPlayers(platform.store) }
     var openDeviceId by remember { mutableStateOf<String?>(null) }
+    var aligning by remember { mutableStateOf(false) }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
             Column(Modifier.safeDrawingPadding().fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
                 Column(Modifier.widthIn(max = 640.dp).fillMaxWidth().padding(16.dp)) {
                     val player = openDeviceId?.let { id -> known.players.collectAsState().value.firstOrNull { it.deviceId == id } }
-                    if (player == null) {
-                        ProjectorList(platform, known, onOpen = { openDeviceId = it.deviceId })
-                    } else {
-                        ProjectorScreen(platform, known, player, onBack = { openDeviceId = null })
+                    when {
+                        player == null -> ProjectorList(platform, known, onOpen = { openDeviceId = it.deviceId })
+                        aligning -> MappingEditor(player, onDone = { aligning = false })
+                        else -> ProjectorScreen(platform, known, player, onBack = { openDeviceId = null }, onAlign = { aligning = true })
                     }
                 }
             }
@@ -210,7 +211,13 @@ private fun PinDialog(address: PlayerAddress, onPair: suspend (String) -> Unit, 
 }
 
 @Composable
-private fun ProjectorScreen(platform: ControllerPlatform, known: KnownPlayers, player: KnownPlayer, onBack: () -> Unit) {
+private fun ProjectorScreen(
+    platform: ControllerPlatform,
+    known: KnownPlayers,
+    player: KnownPlayer,
+    onBack: () -> Unit,
+    onAlign: () -> Unit,
+) {
     val client = remember(player) { player.client() }
     val scope = rememberCoroutineScope()
     var info by remember { mutableStateOf<DeviceInfo?>(null) }
@@ -271,6 +278,10 @@ private fun ProjectorScreen(platform: ControllerPlatform, known: KnownPlayers, p
                 }
             },
         ) { Text("Send a video to loop") }
+
+        OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = onAlign) {
+            Text("Align mapping live on the wall")
+        }
 
         progress?.let { p ->
             LinearProgressIndicator(progress = { p.fraction }, modifier = Modifier.fillMaxWidth())

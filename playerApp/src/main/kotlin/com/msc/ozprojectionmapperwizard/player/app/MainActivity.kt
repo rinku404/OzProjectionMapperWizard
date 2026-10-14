@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private lateinit var playerView: PlayerView
     private lateinit var testPattern: View
     private lateinit var setupText: TextView
+    private lateinit var liveView: LiveView
     private var currentFile: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,6 +47,7 @@ class MainActivity : Activity() {
         playerView = findViewById(R.id.player_view)
         testPattern = findViewById(R.id.test_pattern)
         setupText = findViewById(R.id.setup_text)
+        liveView = findViewById(R.id.live_view)
         exo = ExoPlayer.Builder(this).build().apply {
             repeatMode = Player.REPEAT_MODE_ONE
             volume = 0f
@@ -54,6 +56,14 @@ class MainActivity : Activity() {
 
         PlayerService.start(this)
         scope.launch { player.director.playback.collect { show(it) } }
+        // Live alignment covers the show while a controller is connected, then the show carries on.
+        scope.launch {
+            player.live.state.collect { state ->
+                liveView.state = state
+                liveView.visibility = if (state != null) View.VISIBLE else View.GONE
+                exo.playWhenReady = state == null && currentFile != null
+            }
+        }
         // The PIN changes after each pairing and the address after a network change.
         scope.launch {
             while (isActive) {
@@ -77,7 +87,7 @@ class MainActivity : Activity() {
                 exo.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
                 exo.prepare()
             }
-            exo.playWhenReady = true
+            exo.playWhenReady = !player.live.isLive
             playerView.visibility = View.VISIBLE
         } else {
             currentFile = null

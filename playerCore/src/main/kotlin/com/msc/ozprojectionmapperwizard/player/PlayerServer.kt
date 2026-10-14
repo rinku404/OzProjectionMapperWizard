@@ -1,10 +1,12 @@
 package com.msc.ozprojectionmapperwizard.player
 
 import com.msc.ozprojectionmapperwizard.core.ProjectJson
+import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ShowManifest
 import com.msc.ozprojectionmapperwizard.core.protocol.ApiError
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
+import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
@@ -30,6 +32,15 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
+import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.pingPeriod
+import io.ktor.server.websocket.timeout
+import io.ktor.server.websocket.webSocket
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
+import io.ktor.websocket.close
+import io.ktor.websocket.readText
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -52,6 +63,7 @@ class PlayerServer(
     private val clock: PlayerClock,
     private val director: PlaybackDirector,
     private val platform: PlatformInfo,
+    private val live: LiveSession = LiveSession(),
 ) {
     private var engine: EmbeddedServer<*, *>? = null
 
@@ -70,6 +82,11 @@ class PlayerServer(
 
     fun Application.module() {
         install(ContentNegotiation) { json(ProjectJson.json) }
+        install(WebSockets) {
+            // Ends live mode soon after a phone walks out of Wi-Fi range without closing the socket.
+            pingPeriod = 5.seconds
+            timeout = 15.seconds
+        }
         install(StatusPages) {
             exception<UploadConflict> { call, e ->
                 call.respond(HttpStatusCode.Conflict, UploadStatus(call.parameters["sha256"].orEmpty(), e.receivedBytes, false))
@@ -87,7 +104,38 @@ class PlayerServer(
                 else call.respond(PairResponse(token, platform.deviceId))
             }
 
+            webSocket("/live") {
+                val token = call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
+                if (!pairing.isAuthorized(token)) {
+                    close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Pair with this player first"))
+                    return@webSocket
+                }
+                val connection = Any()
+                live.begin(connection)
+                try {
+                    for (frame in incoming) {
+                        if (frame !is Frame.Text) continue
+                        val state = runCatching { ProjectJson.json.decodeFromString(LiveState.serializer(), frame.readText()) }
+                            .getOrNull() ?: continue
+                        live.update(connection, state)
+                    }
+                } finally {
+                    live.end(connection)
+                }
+            }
+
             authorized {
+                get("/project") {
+                    val text = storage.readText(PROJECT_FILE)
+                    if (text == null) call.respond(HttpStatusCode.NotFound, ApiError("No project saved yet"))
+                    else call.respond(ProjectJson.decodeProject(text))
+                }
+                put("/project") {
+                    val project = call.receive<Project>()
+                    storage.writeText(PROJECT_FILE, ProjectJson.encodeProject(project))
+                    call.respond(HttpStatusCode.NoContent)
+                }
+
                 get("/files/{sha256}") {
                     val sha = call.parameters["sha256"]!!
                     val (received, complete) = storage.uploadStatus(sha)
@@ -162,7 +210,12 @@ class PlayerServer(
         freeBytes = storage.freeBytes(),
         shows = storage.shows(),
         nowPlaying = director.playback.value.nowPlaying,
+        live = live.isLive,
     )
+
+    private companion object {
+        const val PROJECT_FILE = "project.json"
+    }
 
     /** Routes declared inside need a paired controller's bearer token. */
     private fun Route.authorized(build: AuthorizedRoutes.() -> Unit) = AuthorizedRoutes(this).build()

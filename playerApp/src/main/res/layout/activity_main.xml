@@ -28,4 +28,10 @@
         android:padding="32dp"
         android:textColor="@android:color/white"
         android:textSize="28sp" />
+
+    <com.msc.ozprojectionmapperwizard.player.app.LiveView
+        android:id="@+id/live_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone" />
 </FrameLayout>

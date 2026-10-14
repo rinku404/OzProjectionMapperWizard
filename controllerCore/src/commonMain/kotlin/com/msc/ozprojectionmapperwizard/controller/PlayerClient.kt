@@ -1,10 +1,12 @@
 package com.msc.ozprojectionmapperwizard.controller
 
 import com.msc.ozprojectionmapperwizard.core.ProjectJson
+import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ShowManifest
 import com.msc.ozprojectionmapperwizard.core.protocol.ApiError
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
+import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayerProtocol
@@ -14,6 +16,8 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.websocket.WebSockets
+import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
@@ -29,6 +33,11 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
+import io.ktor.websocket.CloseReason
+import io.ktor.websocket.Frame
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 
 /** Where a player listens on the local network. */
 data class PlayerAddress(val host: String, val port: Int = PlayerProtocol.DEFAULT_PORT) {
@@ -108,6 +117,39 @@ class PlayerClient(
 
     suspend fun resume(): DeviceInfo = http.post("${address.baseUrl}/resume") { auth() }.ok().body()
 
+    /** The mapping project saved on the player, or null if none has been saved yet. */
+    suspend fun project(): Project? {
+        val response = http.get("${address.baseUrl}/project") { auth() }
+        if (response.status == HttpStatusCode.NotFound) return null
+        return response.ok().body()
+    }
+
+    suspend fun saveProject(project: Project) {
+        http.put("${address.baseUrl}/project") { auth(); json(project) }.ok()
+    }
+
+    /**
+     * Live alignment: sends each of [states] to the player (at most one per [minIntervalMillis],
+     * always ending on the newest) until cancelled. Throws when the connection is refused or lost.
+     */
+    suspend fun live(states: Flow<LiveState>, minIntervalMillis: Long = 33) {
+        val url = address.baseUrl.replaceFirst("http://", "ws://") + "/live"
+        http.webSocket(urlString = url, request = { auth() }) {
+            val sender = launch {
+                states.collect { state ->
+                    outgoing.send(Frame.Text(ProjectJson.json.encodeToString(LiveState.serializer(), state)))
+                    delay(minIntervalMillis)
+                }
+            }
+            val reason = closeReason.await()
+            sender.cancel()
+            if (reason?.code == CloseReason.Codes.VIOLATED_POLICY.code) {
+                throw PlayerException(401, "This projector no longer knows this device. Pair it again.")
+            }
+            throw PlayerException(0, "Lost the live connection to the projector")
+        }
+    }
+
     private fun HttpRequestBuilder.auth() {
         token?.let { header("Authorization", "Bearer $it") }
     }
@@ -139,6 +181,7 @@ class PlayerClient(
             expectSuccess = false
             engine { requestTimeout = 120_000 }
             install(ContentNegotiation) { json(ProjectJson.json) }
+            install(WebSockets) { pingIntervalMillis = 5_000 }
         }
     }
 }

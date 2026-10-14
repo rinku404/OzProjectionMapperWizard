@@ -4,7 +4,7 @@ name: Controller apps
 # GitHub Release on every push that touches them.
 on:
   push:
-    branches: [master, controller-app]
+    branches: ['**']
     paths: ['core/**', 'playerCore/**', 'controllerCore/**', 'shared/**', 'androidApp/**', 'desktopApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/controller-apps.yml']
   workflow_dispatch:
 
