@@ -3,6 +3,7 @@ package com.msc.ozprojectionmapperwizard
 import com.msc.ozprojectionmapperwizard.controller.BlenderImport
 import com.msc.ozprojectionmapperwizard.controller.KeyValueStore
 import com.msc.ozprojectionmapperwizard.controller.LoadedExport
+import com.msc.ozprojectionmapperwizard.controller.MediaLibrary
 import com.msc.ozprojectionmapperwizard.controller.PickedVideo
 import com.msc.ozprojectionmapperwizard.controller.RenderException
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
@@ -33,19 +34,45 @@ class DesktopRenderer(private val store: KeyValueStore, private val home: File) 
     private val exe = if (windows) ".exe" else ""
     private var tools: ShowRender? = null
 
-    override suspend fun importMedia(onStep: (RenderStep) -> Unit): MediaItem? {
-        val file = withContext(Dispatchers.Main) {
-            val dialog = FileDialog(null as Frame?, "Choose a video, GIF or image", FileDialog.LOAD)
+    override val library = MediaLibrary(store)
+
+    override suspend fun addToLibrary(onStep: (RenderStep) -> Unit): Int {
+        val files = withContext(Dispatchers.Main) {
+            val dialog = FileDialog(null as Frame?, "Add videos, GIFs and images", FileDialog.LOAD)
+            dialog.isMultipleMode = true
             dialog.setFilenameFilter { _, name -> name.substringAfterLast('.').lowercase() in MEDIA_EXTENSIONS }
             dialog.isVisible = true
-            dialog.files.firstOrNull()
-        } ?: return null
+            dialog.files.toList()
+        }
+        if (files.isEmpty()) return 0
         val render = tools(onStep)
+        val added = withContext(Dispatchers.IO) {
+            files.mapIndexedNotNull { i, file ->
+                onStep(RenderStep("Reading ${file.name} (${i + 1} of ${files.size})…", i.toFloat() / files.size))
+                // One unreadable file shouldn't stop the rest; it is just left out.
+                runCatching { render.probe(file) }.getOrNull()?.also { store.put(KEY_PREFIX + it.id, file.absolutePath) }
+            }
+        }
+        library.add(added)
+        if (added.isEmpty()) throw RenderException("None of those files could be read as a video, GIF or image.")
+        return added.size
+    }
+
+    override suspend fun thumbnail(media: MediaItem): ByteArray? = withContext(Dispatchers.IO) {
+        val cached = File(home, "thumbnails/${media.id}.png")
+        if (cached.isFile) return@withContext cached.readBytes()
+        val file = fileOf(media.id)?.takeIf { it.isFile } ?: return@withContext null
+        val png = runCatching { tools {}.thumbnail(file, media) }.getOrNull() ?: return@withContext null
+        cached.parentFile.mkdirs()
+        cached.writeBytes(png)
+        png
+    }
+
+    override suspend fun preview(project: Project, mapping: ProjectorMapping): ByteArray {
+        val render = tools {}
         return withContext(Dispatchers.IO) {
-            onStep(RenderStep("Reading ${file.name}…"))
-            val item = render.probe(file)
-            store.put(KEY_PREFIX + item.id, file.absolutePath)
-            item
+            val files = project.media.mapNotNull { item -> fileOf(item.id)?.let { item.id to it } }.toMap()
+            render.preview(project, mapping, files)
         }
     }
 
