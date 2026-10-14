@@ -134,10 +134,7 @@ class ShowRender(private val ffmpeg: String, private val ffprobe: String) {
 
         companion object {
             fun open(render: ShowRender, media: MediaItem, file: File, cue: Cue, maxWidth: Int, maxHeight: Int, fps: Int): Source {
-                // Fit inside the output: a bigger source only costs time, as each pixel is sampled once.
-                val scale = min(1.0, min(maxWidth.toDouble() / media.width, maxHeight.toDouble() / media.height))
-                val w = (media.width * scale).roundToInt().coerceAtLeast(2) / 2 * 2
-                val h = (media.height * scale).roundToInt().coerceAtLeast(2) / 2 * 2
+                val (w, h) = fit(media, maxWidth, maxHeight)
                 return if (media.kind == MediaKind.IMAGE) {
                     Still(render.decodeOne(file, w, h))
                 } else {
@@ -192,10 +189,57 @@ class ShowRender(private val ffmpeg: String, private val ffprobe: String) {
         }
     }
 
-    private fun decodeOne(file: File, w: Int, h: Int): Frame {
+    /** A PNG of [media] at most [maxSize] pixels on its longer side; videos show a frame a little way in. */
+    fun thumbnail(file: File, media: MediaItem, maxSize: Int = 320): ByteArray {
+        val (w, h) = fit(media, maxSize, maxSize)
+        val seek = media.durationSeconds?.let { min(1.0, it / 3) } ?: 0.0
         val process = ProcessBuilder(
-            ffmpeg, "-v", "error", "-i", file.absolutePath, "-frames:v", "1",
-            "-vf", "scale=$w:$h:flags=area,format=bgra", "-f", "rawvideo", "-",
+            ffmpeg, "-v", "error", "-ss", "%.3f".format(java.util.Locale.ROOT, seek), "-i", file.absolutePath, "-frames:v", "1",
+            "-vf", "scale=$w:$h:flags=area", "-f", "image2pipe", "-c:v", "png", "-",
+        ).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val png = process.inputStream.use(InputStream::readAllBytes)
+        process.waitFor()
+        if (png.isEmpty()) throw RenderException("FFmpeg couldn't make a preview of ${file.name}.")
+        return png
+    }
+
+    /**
+     * One frame of the show at [atSeconds] as a PNG at the projector's size: how the mapping looks
+     * with its current media, for previewing a choice before rendering the whole show.
+     */
+    fun preview(project: Project, mapping: ProjectorMapping, files: Map<String, File>, atSeconds: Double = 1.0): ByteArray {
+        val timeline = Timeline(project, mapping)
+        val output = mapping.output
+        val t = atSeconds.coerceIn(0.0, project.scene.durationSeconds)
+        val frame = Frame(output.width, output.height).apply { fill(OPAQUE_BLACK) }
+        val mediaById = project.media.associateBy { it.id }
+        val decoded = HashMap<Pair<String, Double>, Frame>()
+        for (layer in timeline.layersAt(t)) {
+            val media = mediaById[layer.cue.mediaId] ?: continue
+            val file = files[media.id]?.takeIf { it.isFile } ?: continue
+            val local = (t - layer.cue.startSeconds).coerceAtLeast(0.0)
+            val duration = media.durationSeconds ?: 0.0
+            val at = when {
+                duration <= 0.0 -> 0.0
+                layer.cue.loop -> local % duration
+                else -> min(local, duration - 0.05).coerceAtLeast(0.0)
+            }
+            val (w, h) = fit(media, output.width, output.height)
+            val image = decoded.getOrPut(media.id to at) { decodeOne(file, w, h, at) }
+            Compositor.draw(frame, image, layer.warp, layer.cue.sourceCrop, layer.opacity, layer.surface.featherPx)
+        }
+        val image = java.awt.image.BufferedImage(output.width, output.height, java.awt.image.BufferedImage.TYPE_INT_RGB)
+        image.setRGB(0, 0, output.width, output.height, frame.pixels, 0, output.width)
+        return java.io.ByteArrayOutputStream().also { javax.imageio.ImageIO.write(image, "png", it) }.toByteArray()
+    }
+
+    private fun decodeOne(file: File, w: Int, h: Int, atSeconds: Double = 0.0): Frame {
+        val seek = if (atSeconds > 0) listOf("-ss", "%.3f".format(java.util.Locale.ROOT, atSeconds)) else emptyList()
+        val process = ProcessBuilder(
+            listOf(ffmpeg, "-v", "error") + seek + listOf(
+                "-i", file.absolutePath, "-frames:v", "1",
+                "-vf", "scale=$w:$h:flags=area,format=bgra", "-f", "rawvideo", "-",
+            ),
         ).start()
         val stderr = StringBuilder()
         val drain = Thread { stderr.append(process.errorStream.bufferedReader().readText()) }.apply { start() }
@@ -229,6 +273,14 @@ class ShowRender(private val ffmpeg: String, private val ffprobe: String) {
 
     companion object {
         private const val OPAQUE_BLACK = 0xFF000000.toInt()
+
+        /** Fits [media] inside the box: a bigger source only costs time, as each pixel is sampled once. Even sizes for FFmpeg. */
+        private fun fit(media: MediaItem, maxWidth: Int, maxHeight: Int): Pair<Int, Int> {
+            val scale = min(1.0, min(maxWidth.toDouble() / media.width, maxHeight.toDouble() / media.height))
+            val w = (media.width * scale).roundToInt().coerceAtLeast(2) / 2 * 2
+            val h = (media.height * scale).roundToInt().coerceAtLeast(2) / 2 * 2
+            return w to h
+        }
 
         private fun writeFrame(out: OutputStream, frame: Frame, buffer: ByteBuffer) {
             buffer.clear()

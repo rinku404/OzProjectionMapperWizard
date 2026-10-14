@@ -115,6 +115,28 @@ class ShowRenderTest {
         assertTrue(isNear(px(Vec2(corners[0].x + 2, corners[1].y + 2)), 0x000000), "beside the apex should be black")
     }
 
+    @Test
+    fun makesThumbnailsAndAPreviewOfTheMapping() {
+        if (ffmpeg == null || ffprobe == null) return
+        val render = ShowRender(ffmpeg, ffprobe)
+        val clip = make("wide.mp4", "color=green:size=640x360:rate=10:duration=2")
+        val item = render.probe(clip)
+        val thumb = javax.imageio.ImageIO.read(render.thumbnail(clip, item, maxSize = 160).inputStream())
+        assertEquals(160, thumb.width)
+        assertEquals(90, thumb.height)
+
+        var project = Project(name = "T", projectors = listOf(ProjectorMapping("p", "P", Output(320, 180, 10))))
+        project = Mapping.addSurface(project, "p").first
+        project = Content.setMedia(Content.setDuration(project, 2.0), "face-1", item)
+        val png = render.preview(project, project.projectors.single(), mapOf(item.id to clip))
+        val image = javax.imageio.ImageIO.read(png.inputStream())
+        assertEquals(320, image.width)
+        val corners = Mapping.corners(project.projectors.single().surfaces.single())
+        val centre = corners.reduce { a, b -> a + b } * 0.25
+        assertTrue(isNear(image.getRGB(centre.x.toInt(), centre.y.toInt()), 0x008000), "the surface shows the clip")
+        assertTrue(isNear(image.getRGB(2, 2), 0x000000), "outside stays black")
+    }
+
     private fun make(name: String, lavfi: String, vararg extra: String): File {
         val file = File(dir, name)
         val p = ProcessBuilder(listOf(ffmpeg!!, "-v", "error", "-y", "-f", "lavfi", "-i", lavfi) + extra + file.absolutePath)

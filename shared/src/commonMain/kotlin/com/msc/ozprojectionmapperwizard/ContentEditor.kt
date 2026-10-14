@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -51,6 +52,7 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
     var notice by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    var pickingFace by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(player) {
         try {
@@ -88,6 +90,23 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
         return Content.setDuration(p, seconds)
     }
 
+    val picking = pickingFace
+    val forPicker = project
+    if (picking != null && forPicker != null) {
+        MediaPicker(
+            renderer, forPicker, player.deviceId, picking,
+            onPick = { media ->
+                val updated = Content.setMedia(forPicker, picking, media)
+                // Until the length is changed by hand, it follows the longest video.
+                if (lengthText.isBlank() || forPicker.scene.cues.isEmpty()) lengthText = formatSeconds(Content.suggestedDuration(updated))
+                project = updated
+                pickingFace = null
+            },
+            onCancel = { pickingFace = null },
+        )
+        return
+    }
+
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onDone, enabled = !busy) { Text("‹ ${player.name}") }
         Text("Videos on surfaces", style = MaterialTheme.typography.headlineMedium)
@@ -121,7 +140,8 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
             val face = current.scene.faces.firstOrNull { it.id == surface.faceId }
             val media = Content.mediaFor(current, surface.faceId)
             Card(Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (media != null) MediaThumbnail(renderer, media, Modifier.width(96.dp).padding(vertical = 8.dp))
                     Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
                         Text(face?.name ?: surface.id, fontWeight = FontWeight.SemiBold)
                         Text(media?.let(::describeMedia) ?: "Black", style = MaterialTheme.typography.bodySmall)
@@ -129,16 +149,7 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
                             Text("This file isn't on this computer. Choose it again.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    TextButton(enabled = !busy, onClick = {
-                        work {
-                            val picked = renderer.importMedia { step = it } ?: return@work
-                            val updated = Content.setMedia(current, surface.faceId, picked)
-                            // Until the length is changed by hand, it follows the longest video.
-                            val suggested = Content.suggestedDuration(updated)
-                            if (lengthText.isBlank() || current.scene.cues.isEmpty()) lengthText = formatSeconds(suggested)
-                            project = updated
-                        }
-                    }) { Text("Choose…") }
+                    TextButton(enabled = !busy, onClick = { pickingFace = surface.faceId }) { Text("Choose…") }
                     if (media != null) {
                         TextButton(enabled = !busy, onClick = { project = Content.setMedia(current, surface.faceId, null) }) { Text("Clear") }
                     }
@@ -200,7 +211,7 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
     }
 }
 
-private fun describeMedia(media: MediaItem): String {
+internal fun describeMedia(media: MediaItem): String {
     val kind = when {
         media.kind == MediaKind.IMAGE -> "Image"
         media.fileName.endsWith(".gif", ignoreCase = true) -> "GIF"
