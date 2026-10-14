@@ -1,8 +1,11 @@
 package com.msc.ozprojectionmapperwizard.core.render
 
 import com.msc.ozprojectionmapperwizard.core.geometry.Homography
+import com.msc.ozprojectionmapperwizard.core.geometry.PolygonWarp
+import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.model.Rect
+import com.msc.ozprojectionmapperwizard.core.model.Warp
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -49,9 +52,6 @@ object Compositor {
 
         val cropW = crop.right - crop.left
         val cropH = crop.bottom - crop.top
-        val sw = src.width
-        val sh = src.height
-        val sp = src.pixels
         val op = out.pixels
         val alpha = opacity.coerceIn(0.0, 1.0)
 
@@ -73,33 +73,89 @@ object Compositor {
                 if (featherV > 0) a *= min(1.0, min(v, 1 - v) / featherV)
                 if (a <= 0.0) continue
 
-                // Bilinear sample at pixel centres, clamped to the source edges.
-                val sx = ((crop.left + u * cropW) * sw - 0.5).coerceIn(0.0, sw - 1.0)
-                val sy = ((crop.top + v * cropH) * sh - 0.5).coerceIn(0.0, sh - 1.0)
-                val ix = sx.toInt()
-                val iy = sy.toInt()
-                val fx = sx - ix
-                val fy = sy - iy
-                val ix1 = min(ix + 1, sw - 1)
-                val iy1 = min(iy + 1, sh - 1)
-                val c00 = sp[iy * sw + ix]
-                val c10 = sp[iy * sw + ix1]
-                val c01 = sp[iy1 * sw + ix]
-                val c11 = sp[iy1 * sw + ix1]
-                val sa = lerp4(c00 ushr 24, c10 ushr 24, c01 ushr 24, c11 ushr 24, fx, fy)
-                val sr = lerp4((c00 shr 16) and 0xFF, (c10 shr 16) and 0xFF, (c01 shr 16) and 0xFF, (c11 shr 16) and 0xFF, fx, fy)
-                val sg = lerp4((c00 shr 8) and 0xFF, (c10 shr 8) and 0xFF, (c01 shr 8) and 0xFF, (c11 shr 8) and 0xFF, fx, fy)
-                val sb = lerp4(c00 and 0xFF, c10 and 0xFF, c01 and 0xFF, c11 and 0xFF, fx, fy)
-
-                val k = a * sa / 255.0
-                if (k <= 0.0) continue
-                val d = op[row + x]
-                val r = ((d shr 16) and 0xFF) * (1 - k) + sr * k
-                val g = ((d shr 8) and 0xFF) * (1 - k) + sg * k
-                val b = (d and 0xFF) * (1 - k) + sb * k
-                op[row + x] = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
+                blend(op, row + x, src, crop.left + u * cropW, crop.top + v * cropH, a)
             }
         }
+    }
+
+    /** Draws [warp] (any number of corners) the same way; [featherPx] fades in from its outline. */
+    fun drawPolygon(out: Frame, src: Frame, warp: PolygonWarp, crop: Rect = Rect.FULL, opacity: Double = 1.0, featherPx: Double = 0.0) {
+        if (opacity <= 0.0) return
+        val corners = warp.corners
+        val x0 = max(0, floor(corners.minOf { it.x }).toInt())
+        val x1 = min(out.width - 1, ceil(corners.maxOf { it.x }).toInt())
+        val y0 = max(0, floor(corners.minOf { it.y }).toInt())
+        val y1 = min(out.height - 1, ceil(corners.maxOf { it.y }).toInt())
+        if (x0 > x1 || y0 > y1) return
+        val cropW = crop.right - crop.left
+        val cropH = crop.bottom - crop.top
+        val alpha = opacity.coerceIn(0.0, 1.0)
+        for (y in y0..y1) {
+            val row = y * out.width
+            for (x in x0..x1) {
+                val p = Vec2(x + 0.5, y + 0.5)
+                val uv = warp.inverse(p) ?: continue
+                var a = alpha
+                if (featherPx > 0) a *= min(1.0, edgeDistance(p, corners) / featherPx)
+                if (a <= 0.0) continue
+                blend(out.pixels, row + x, src, crop.left + uv.x.coerceIn(0.0, 1.0) * cropW, crop.top + uv.y.coerceIn(0.0, 1.0) * cropH, a)
+            }
+        }
+    }
+
+    /** Draws a surface's warp: the fast corner pin for quads, triangles for other polygons. */
+    fun draw(out: Frame, src: Frame, warp: Warp, crop: Rect = Rect.FULL, opacity: Double = 1.0, featherPx: Double = 0.0) {
+        when (warp) {
+            is Warp.Quad -> drawQuad(out, src, warp.corners, crop, opacity, featherPx)
+            else -> warp.polygonWarp()?.let { drawPolygon(out, src, it, crop, opacity, featherPx) }
+        }
+    }
+
+    /** Bilinear sample of [src] at ([u], [v]) in 0..1, blended over pixel [index] of [op] with [a]. */
+    private fun blend(op: IntArray, index: Int, src: Frame, u: Double, v: Double, a: Double) {
+        val sw = src.width
+        val sh = src.height
+        val sp = src.pixels
+        // Pixel centres, clamped to the source edges.
+        val sx = (u * sw - 0.5).coerceIn(0.0, sw - 1.0)
+        val sy = (v * sh - 0.5).coerceIn(0.0, sh - 1.0)
+        val ix = sx.toInt()
+        val iy = sy.toInt()
+        val fx = sx - ix
+        val fy = sy - iy
+        val ix1 = min(ix + 1, sw - 1)
+        val iy1 = min(iy + 1, sh - 1)
+        val c00 = sp[iy * sw + ix]
+        val c10 = sp[iy * sw + ix1]
+        val c01 = sp[iy1 * sw + ix]
+        val c11 = sp[iy1 * sw + ix1]
+        val sa = lerp4(c00 ushr 24, c10 ushr 24, c01 ushr 24, c11 ushr 24, fx, fy)
+        val sr = lerp4((c00 shr 16) and 0xFF, (c10 shr 16) and 0xFF, (c01 shr 16) and 0xFF, (c11 shr 16) and 0xFF, fx, fy)
+        val sg = lerp4((c00 shr 8) and 0xFF, (c10 shr 8) and 0xFF, (c01 shr 8) and 0xFF, (c11 shr 8) and 0xFF, fx, fy)
+        val sb = lerp4(c00 and 0xFF, c10 and 0xFF, c01 and 0xFF, c11 and 0xFF, fx, fy)
+
+        val k = a * sa / 255.0
+        if (k <= 0.0) return
+        val d = op[index]
+        val r = ((d shr 16) and 0xFF) * (1 - k) + sr * k
+        val g = ((d shr 8) and 0xFF) * (1 - k) + sg * k
+        val b = (d and 0xFF) * (1 - k) + sb * k
+        op[index] = (0xFF shl 24) or (r.toInt() shl 16) or (g.toInt() shl 8) or b.toInt()
+    }
+
+    /** Distance from [p] to the nearest edge of [polygon]. */
+    private fun edgeDistance(p: Vec2, polygon: List<Vec2>): Double {
+        var best = Double.MAX_VALUE
+        for (i in polygon.indices) {
+            val a = polygon[i]
+            val b = polygon[(i + 1) % polygon.size]
+            val dx = b.x - a.x
+            val dy = b.y - a.y
+            val len2 = dx * dx + dy * dy
+            val t = if (len2 == 0.0) 0.0 else (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).coerceIn(0.0, 1.0)
+            best = min(best, hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)))
+        }
+        return best
     }
 
     private fun lerp4(c00: Int, c10: Int, c01: Int, c11: Int, fx: Double, fy: Double): Double {

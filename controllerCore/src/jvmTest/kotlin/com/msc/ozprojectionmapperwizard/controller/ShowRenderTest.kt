@@ -89,6 +89,32 @@ class ShowRenderTest {
         assertTrue(isNear(px(315, 175), 0x000000), "outside the slanted corner should be black")
     }
 
+    @Test
+    fun rendersABlenderExportOntoPolygons() = runBlocking {
+        if (ffmpeg == null || ffprobe == null) return@runBlocking
+        val render = ShowRender(ffmpeg, ffprobe)
+        make("Roof.mp4", "color=red:size=200x100:rate=10:duration=1")
+        val export = BlenderImport.parse(
+            """{"format": "oz-surfaces", "version": 1, "fps": 10, "durationSeconds": 1.0, "surfaces": [
+                 {"name": "Roof", "media": "Roof.mp4", "width": 200, "height": 100, "points": [[0, 1], [0.5, 0], [1, 1]]}]}""",
+        )
+        val roof = File(dir, "Roof.mp4")
+        val item = render.probe(roof)
+        var project = Project(name = "T", projectors = listOf(ProjectorMapping("p", "P", Output(320, 180, 10))))
+        project = BlenderImport.apply(project, "p", LoadedExport(export, mapOf("Roof" to item)))
+        val surface = project.projectors.single().surfaces.single()
+        project = Mapping.moveCorner(project, "p", surface.id, 1, Vec2(200.0, 10.0))
+        val corners = Mapping.corners(project.projectors.single().surfaces.single())
+
+        val out = File(dir, "roof-show.mp4")
+        render.render(project, project.projectors.single(), mapOf(item.id to roof), out)
+        val frame = decodeFrame(out, 0.5, 320, 180)
+        fun px(p: Vec2) = frame[p.y.toInt() * 320 + p.x.toInt()]
+        val centre = (corners[0] + corners[1] + corners[2]) * (1.0 / 3)
+        assertTrue(isNear(px(centre), 0xFF0000), "inside the triangle should be red, was ${hex(px(centre))}")
+        assertTrue(isNear(px(Vec2(corners[0].x + 2, corners[1].y + 2)), 0x000000), "beside the apex should be black")
+    }
+
     private fun make(name: String, lavfi: String, vararg extra: String): File {
         val file = File(dir, name)
         val p = ProcessBuilder(listOf(ffmpeg!!, "-v", "error", "-y", "-f", "lavfi", "-i", lavfi) + extra + file.absolutePath)

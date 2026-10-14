@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.msc.ozprojectionmapperwizard.controller.BlenderImport
 import com.msc.ozprojectionmapperwizard.controller.Content
 import com.msc.ozprojectionmapperwizard.controller.KnownPlayer
 import com.msc.ozprojectionmapperwizard.controller.Mapping
@@ -101,8 +102,19 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
             return@Column
         }
         val mapping = Mapping.projector(current, player.deviceId)
+        OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+            work {
+                val loaded = renderer.importBlender { step = it } ?: return@work
+                val updated = BlenderImport.apply(current, player.deviceId, loaded)
+                project = updated
+                lengthText = formatSeconds(updated.scene.durationSeconds)
+                step = RenderStep("Saving on the projector…")
+                client.saveProject(updated)
+                notice = "Imported ${loaded.export.surfaces.size} surfaces from Blender. Drag their corners into place in \"Align mapping live on the wall\", then come back here to render."
+            }
+        }) { Text("Import surfaces from Blender…") }
         if (mapping.surfaces.isEmpty()) {
-            Text("There are no surfaces yet. Add them in \"Align mapping live on the wall\" first.")
+            Text("There are no surfaces yet. Import them from Blender, or add them in \"Align mapping live on the wall\".")
         }
 
         mapping.surfaces.forEach { surface ->

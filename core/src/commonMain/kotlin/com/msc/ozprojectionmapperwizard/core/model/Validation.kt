@@ -24,6 +24,9 @@ fun Project.validate(): List<String> = buildList {
             if (s.faceId !in faceIds) add("$where uses unknown face '${s.faceId}'")
             when (val w = s.warp) {
                 is Warp.Quad -> if (w.corners.size != 4) add("$where needs 4 corners, has ${w.corners.size}")
+                is Warp.Polygon -> if (w.corners.size < 3 || w.corners.size != w.source.size) {
+                    add("$where needs 3 or more corners, matching its shape")
+                }
                 is Warp.Mesh -> if (w.cols < 2 || w.rows < 2 || w.points.size != w.cols * w.rows) {
                     add("$where has a mesh with the wrong number of points")
                 }

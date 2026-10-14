@@ -108,7 +108,7 @@ class ShowRender(private val ffmpeg: String, private val ffprobe: String) {
                 for (layer in timeline.layersAt(t)) {
                     val source = sources.getOrPut(layer.cue) { Source.open(this@ShowRender, mediaById.getValue(layer.cue.mediaId), files.getValue(layer.cue.mediaId), layer.cue, output.width, output.height, output.fps) }
                     val image = source.frameAt(t)
-                    Compositor.drawQuad(frame, image, layer.corners, layer.cue.sourceCrop, layer.opacity, layer.surface.featherPx)
+                    Compositor.draw(frame, image, layer.warp, layer.cue.sourceCrop, layer.opacity, layer.surface.featherPx)
                 }
                 // Cues that have ended free their decoder.
                 sources.entries.removeAll { (cue, source) -> (t >= cue.startSeconds + cue.durationSeconds).also { if (it) source.close() } }

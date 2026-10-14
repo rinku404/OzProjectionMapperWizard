@@ -5,7 +5,7 @@ name: Controller apps
 on:
   push:
     branches: ['**']
-    paths: ['core/**', 'playerCore/**', 'controllerCore/**', 'shared/**', 'androidApp/**', 'desktopApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/controller-apps.yml']
+    paths: ['blender/**', 'core/**', 'playerCore/**', 'controllerCore/**', 'shared/**', 'androidApp/**', 'desktopApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/controller-apps.yml']
   workflow_dispatch:
 
 permissions:
@@ -72,6 +72,9 @@ jobs:
     needs: [android, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: blender
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
@@ -86,6 +89,8 @@ jobs:
           files: |
             oz-controller.apk
             oz-controller.msi
+            blender/oz_projection_export.py
           body: |
             Controller app. On a Windows PC, download and run oz-controller.msi. On an Android phone,
             download oz-controller.apk, open it and allow "Install unknown apps" when Android asks.
+            For Blender, download oz_projection_export.py and install it from Edit > Preferences > Add-ons (Install from Disk).
