@@ -1,0 +1,73 @@
+name: Controller apps
+
+# Builds the controller for phones (APK) and Windows (MSI installer) and publishes both as a
+# GitHub Release on every push that touches them.
+on:
+  push:
+    branches: [master, controller-app]
+    paths: ['core/**', 'playerCore/**', 'controllerCore/**', 'shared/**', 'androidApp/**', 'desktopApp/**', 'gradle/**', '*.gradle.kts', '.github/workflows/controller-apps.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build
+        run: |
+          chmod +x gradlew
+          ./gradlew :controllerCore:jvmTest :androidApp:assembleDebug
+      - run: cp androidApp/build/outputs/apk/debug/androidApp-debug.apk oz-controller.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oz-controller-apk
+          path: oz-controller.apk
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build installer
+        run: ./gradlew :desktopApp:packageMsi
+      - name: Rename installer
+        shell: bash
+        run: cp desktopApp/build/compose/binaries/main/msi/*.msi oz-controller.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oz-controller-msi
+          path: oz-controller.msi
+
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: controller-v0.1.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Controller 0.1.${{ github.run_number }} (${{ github.ref_name }})
+          prerelease: ${{ github.ref_name != 'master' }}
+          # Keeps the "latest" link pointing at the projector player.
+          make_latest: false
+          files: |
+            oz-controller.apk
+            oz-controller.msi
+          body: |
+            Controller app. On a Windows PC, download and run oz-controller.msi. On an Android phone,
+            download oz-controller.apk, open it and allow "Install unknown apps" when Android asks.
