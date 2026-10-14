@@ -1,0 +1,38 @@
+name: Player APK
+
+# Builds the projector player app. Pushing a tag like player-v0.1.0 publishes the APK as a
+# GitHub Release, so the projector can download it from its browser without adb.
+on:
+  push:
+    tags: ['player-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Test and build
+        run: |
+          chmod +x gradlew
+          ./gradlew :core:allTests :playerCore:test :playerApp:assembleDebug
+      - run: cp playerApp/build/outputs/apk/debug/playerApp-debug.apk oz-player.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oz-player-apk
+          path: oz-player.apk
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: oz-player.apk
+          body: |
+            Projector player app. On the projector, open this page in the browser, download
+            oz-player.apk, open it and allow "Install unknown apps" when Android asks.
