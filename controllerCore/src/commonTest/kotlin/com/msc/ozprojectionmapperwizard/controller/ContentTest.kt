@@ -5,6 +5,7 @@ import com.msc.ozprojectionmapperwizard.core.model.MediaKind
 import com.msc.ozprojectionmapperwizard.core.model.Output
 import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ProjectorMapping
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -38,6 +39,38 @@ class ContentTest {
         assertEquals(setOf("aaa", "bbb"), p.media.map { it.id }.toSet())
         assertEquals(2, p.scene.cues.size)
         p = Content.setMedia(p, "face-2", null)
+        assertEquals(listOf(logo), p.media)
+    }
+
+    private fun threeSurfaces(): Project = Mapping.addSurface(project(), "p").first
+
+    private fun texture(n: Int) = MediaItem("t$n", "block$n.png", MediaKind.IMAGE, 16, 16)
+
+    @Test
+    fun fillingInOrderStartsOverWhenTheGroupRunsOut() {
+        val faces = listOf("face-1", "face-2", "face-3")
+        val p = Content.fill(threeSurfaces(), faces, listOf(texture(1), texture(2)), Content.FillOrder.IN_ORDER)
+        assertEquals(listOf("t1", "t2", "t1"), faces.map { Content.mediaFor(p, it)?.id })
+        assertEquals(setOf("t1", "t2"), p.media.map { it.id }.toSet())
+    }
+
+    @Test
+    fun shufflingUsesEveryFileBeforeRepeating() {
+        val faces = listOf("face-1", "face-2", "face-3")
+        val files = (1..3).map(::texture)
+        repeat(20) { seed ->
+            val p = Content.fill(threeSurfaces(), faces, files, Content.FillOrder.SHUFFLED, Random(seed))
+            assertEquals(setOf("t1", "t2", "t3"), faces.mapNotNull { Content.mediaFor(p, it)?.id }.toSet())
+        }
+    }
+
+    @Test
+    fun fillingWithAnEmptyGroupChangesNothingAndOneFileGoesEverywhere() {
+        val faces = listOf("face-1", "face-2", "face-3")
+        val start = Content.setMedia(threeSurfaces(), "face-1", clip)
+        assertEquals(start, Content.fill(start, faces, emptyList(), Content.FillOrder.SHUFFLED))
+        val p = Content.setMediaOnAll(start, faces, logo)
+        assertEquals(listOf(logo, logo, logo), faces.map { Content.mediaFor(p, it) })
         assertEquals(listOf(logo), p.media)
     }
 
