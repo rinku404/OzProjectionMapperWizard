@@ -190,7 +190,7 @@ private fun PinDialog(address: PlayerAddress, onPair: suspend (String) -> Unit, 
         title = { Text("Pair with projector") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Type the 6-digit PIN shown on the projector at $address.")
+                Text("Type the 6-digit PIN shown on the projector at $address. If it is playing a show, press an arrow key on its remote to show the PIN.")
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { pin = it.filter(Char::isDigit).take(6) },
@@ -382,7 +382,7 @@ private fun ProjectorScreen(
         AlertDialog(
             onDismissRequest = { confirmForget = false },
             title = { Text("Forget ${player.name}?") },
-            text = { Text("You'll need the projector's PIN to control it again. Its videos stay on it.") },
+            text = { Text("You'll need the projector's PIN to control it again; press an arrow key on its remote to show it. Its videos stay on it.") },
             confirmButton = {
                 Button(onClick = {
                     confirmForget = false
