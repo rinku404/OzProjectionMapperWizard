@@ -90,7 +90,13 @@ data class ProjectorMapping(
     val surfaces: List<Surface> = emptyList(),
     /** Masks over the whole output, in output pixels (for example to black out a wall). */
     val masks: List<Mask> = emptyList(),
+    /** Sets of corners on different surfaces that are tied together and always move as one. */
+    val ties: List<List<CornerRef>> = emptyList(),
 )
+
+/** One corner of one surface, by its index in the surface's corners. */
+@Serializable
+data class CornerRef(val surfaceId: String, val corner: Int)
 
 /** The projector's native display mode. Shows are rendered at exactly this size. */
 @Serializable

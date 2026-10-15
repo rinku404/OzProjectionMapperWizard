@@ -5,6 +5,7 @@ import com.msc.ozprojectionmapperwizard.core.geometry.isInside
 import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.geometry.withCorners
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
+import com.msc.ozprojectionmapperwizard.core.model.CornerRef
 import com.msc.ozprojectionmapperwizard.core.model.Face
 import com.msc.ozprojectionmapperwizard.core.model.MediaItem
 import com.msc.ozprojectionmapperwizard.core.model.Output
@@ -83,10 +84,15 @@ object Mapping {
         return Content.setMedia(added, faceId, media) to surfaceId
     }
 
-    /** Removes the surface, and its face if no other projector uses it. */
+    /** Removes the surface, its ties, and its face if no other projector uses it. */
     fun removeSurface(project: Project, projectorId: String, surfaceId: String): Project {
         val faceId = projector(project, projectorId).surfaces.firstOrNull { it.id == surfaceId }?.faceId ?: return project
-        val withoutSurface = project.updateProjector(projectorId) { p -> p.copy(surfaces = p.surfaces.filterNot { it.id == surfaceId }) }
+        val withoutSurface = project.updateProjector(projectorId) { p ->
+            p.copy(
+                surfaces = p.surfaces.filterNot { it.id == surfaceId },
+                ties = p.ties.map { tie -> tie.filterNot { it.surfaceId == surfaceId } }.filter { it.size > 1 },
+            )
+        }
         val stillUsed = withoutSurface.projectors.any { p -> p.surfaces.any { it.faceId == faceId } }
         if (stillUsed) return withoutSurface
         return withoutSurface.copy(
@@ -102,23 +108,91 @@ object Mapping {
 
     fun corners(surface: Surface): List<Vec2> = surface.warp.corners
 
-    /** Moves one corner, kept inside the projector's image. Refuses moves that would fold the surface. */
-    fun moveCorner(project: Project, projectorId: String, surfaceId: String, corner: Int, to: Vec2): Project =
-        project.updateSurface(projectorId, surfaceId) { surface, output ->
-            val moved = corners(surface).toMutableList().also { it[corner] = clamp(to, output) }
-            val warp = surface.warp.withCorners(moved)
-            val ok = if (warp is Warp.Quad) isConvex(moved) else warp.polygonWarp()?.isValid() == true
-            if (ok) surface.copy(warp = warp) else surface
+    /**
+     * Moves one corner, and every corner tied to it, kept inside the projector's image. Refuses
+     * moves that would fold any surface. Within [snap] pixels of another surface's corner it lands
+     * exactly on it, ready to be tied.
+     */
+    fun moveCorner(project: Project, projectorId: String, surfaceId: String, corner: Int, to: Vec2, snap: Double = 0.0): Project {
+        val mapping = projector(project, projectorId)
+        val group = tiedTo(mapping, CornerRef(surfaceId, corner))
+        var target = clamp(to, mapping.output)
+        if (snap > 0) {
+            val tiedSurfaces = group.map { it.surfaceId }.toSet()
+            mapping.surfaces.filter { it.id !in tiedSurfaces }
+                .flatMap { corners(it) }
+                .minByOrNull { distance(it, target) }
+                ?.takeIf { distance(it, target) <= snap }
+                ?.let { target = it }
         }
+        val moved = setCorners(mapping, group.associateWith { target }) ?: return project
+        return project.updateProjector(projectorId) { moved }
+    }
 
-    /** Moves the whole surface by [delta], stopping at the image edges. */
-    fun moveSurface(project: Project, projectorId: String, surfaceId: String, delta: Vec2): Project =
-        project.updateSurface(projectorId, surfaceId) { surface, output ->
-            val c = corners(surface)
-            val dx = delta.x.coerceIn(-c.minOf { it.x }, output.width - c.maxOf { it.x })
-            val dy = delta.y.coerceIn(-c.minOf { it.y }, output.height - c.maxOf { it.y })
-            surface.copy(warp = surface.warp.withCorners(c.map { Vec2(it.x + dx, it.y + dy) }))
+    /** Moves the whole surface by [delta], stopping at the image edges. Corners tied to it follow. */
+    fun moveSurface(project: Project, projectorId: String, surfaceId: String, delta: Vec2): Project {
+        val mapping = projector(project, projectorId)
+        val surface = mapping.surfaces.firstOrNull { it.id == surfaceId } ?: return project
+        val c = corners(surface)
+        val output = mapping.output
+        val dx = delta.x.coerceIn(-c.minOf { it.x }, output.width - c.maxOf { it.x })
+        val dy = delta.y.coerceIn(-c.minOf { it.y }, output.height - c.maxOf { it.y })
+        val targets = c.indices.flatMap { i ->
+            val to = Vec2(c[i].x + dx, c[i].y + dy)
+            tiedTo(mapping, CornerRef(surfaceId, i)).map { it to to }
+        }.toMap()
+        val moved = setCorners(mapping, targets) ?: return project
+        return project.updateProjector(projectorId) { moved }
+    }
+
+    /** [ref] and every corner tied to it. */
+    fun tiedTo(mapping: ProjectorMapping, ref: CornerRef): Set<CornerRef> =
+        mapping.ties.firstOrNull { ref in it }?.toSet() ?: setOf(ref)
+
+    fun isTied(mapping: ProjectorMapping, ref: CornerRef): Boolean = mapping.ties.any { ref in it }
+
+    /**
+     * Ties [ref] to the nearest corner of another surface within [maxDistance] pixels, moving it
+     * (and anything already tied to it) onto that corner. Unchanged when there is none or the move
+     * would fold a surface.
+     */
+    fun tieToNearest(project: Project, projectorId: String, ref: CornerRef, maxDistance: Double): Project {
+        val mapping = projector(project, projectorId)
+        val group = tiedTo(mapping, ref)
+        val at = cornerOf(mapping, ref) ?: return project
+        val groupSurfaces = group.map { it.surfaceId }.toSet()
+        val nearest = mapping.surfaces.filter { it.id !in groupSurfaces }
+            .flatMap { s -> corners(s).mapIndexed { i, p -> CornerRef(s.id, i) to p } }
+            .filter { (other, _) -> tiedTo(mapping, other).none { it.surfaceId in groupSurfaces } }
+            .minByOrNull { (_, p) -> distance(p, at) }
+            ?.takeIf { (_, p) -> distance(p, at) <= maxDistance }
+            ?: return project
+        val (other, target) = nearest
+        val otherGroup = tiedTo(mapping, other)
+        val moved = setCorners(mapping, group.associateWith { target }) ?: return project
+        val merged = group + otherGroup
+        return project.updateProjector(projectorId) {
+            moved.copy(ties = moved.ties.filterNot { tie -> tie.any { it in merged } } + listOf(merged.toList()))
         }
+    }
+
+    /** Ties together corners of different surfaces that sit on the same spot, as after snapping. */
+    fun tieTouching(project: Project, projectorId: String, ref: CornerRef): Project {
+        val mapping = projector(project, projectorId)
+        val at = cornerOf(mapping, ref) ?: return project
+        val touching = mapping.surfaces.filter { it.id != ref.surfaceId }.flatMap { s ->
+            corners(s).mapIndexedNotNull { i, p -> CornerRef(s.id, i).takeIf { distance(p, at) < 0.5 } }
+        }
+        if (touching.isEmpty()) return project
+        var result = project
+        touching.forEach { result = tieToNearest(result, projectorId, ref, 0.5) }
+        return result
+    }
+
+    /** Frees [ref] from its tie; the other corners stay tied to each other. */
+    fun untie(project: Project, projectorId: String, ref: CornerRef): Project = project.updateProjector(projectorId) { p ->
+        p.copy(ties = p.ties.map { tie -> tie - ref }.filter { it.size > 1 })
+    }
 
     /** The corner of any surface within [radius] of [point], preferring [preferredSurface]. */
     fun cornerAt(mapping: ProjectorMapping, point: Vec2, radius: Double, preferredSurface: String? = null): Pair<String, Int>? {
@@ -175,6 +249,24 @@ object Mapping {
         )
     }
 
+    private fun cornerOf(mapping: ProjectorMapping, ref: CornerRef): Vec2? =
+        mapping.surfaces.firstOrNull { it.id == ref.surfaceId }?.let { corners(it).getOrNull(ref.corner) }
+
+    /** Puts each corner at its target, or null when that would fold a surface. */
+    private fun setCorners(mapping: ProjectorMapping, targets: Map<CornerRef, Vec2>): ProjectorMapping? {
+        val surfaces = mapping.surfaces.map { surface ->
+            val mine = targets.filterKeys { it.surfaceId == surface.id }
+            if (mine.isEmpty()) return@map surface
+            val moved = corners(surface).toMutableList()
+            mine.forEach { (ref, to) -> if (ref.corner in moved.indices) moved[ref.corner] = clamp(to, mapping.output) }
+            val warp = surface.warp.withCorners(moved)
+            val ok = if (warp is Warp.Quad) isConvex(moved) else warp.polygonWarp()?.isValid() == true
+            if (!ok) return null
+            surface.copy(warp = warp)
+        }
+        return mapping.copy(surfaces = surfaces)
+    }
+
     private fun clamp(p: Vec2, output: Output) =
         Vec2(p.x.coerceIn(0.0, output.width.toDouble()), p.y.coerceIn(0.0, output.height.toDouble()))
 
@@ -182,7 +274,4 @@ object Mapping {
 
     private fun Project.updateProjector(id: String, change: (ProjectorMapping) -> ProjectorMapping) =
         copy(projectors = projectors.map { if (it.id == id) change(it) else it })
-
-    private fun Project.updateSurface(projectorId: String, surfaceId: String, change: (Surface, Output) -> Surface) =
-        updateProjector(projectorId) { p -> p.copy(surfaces = p.surfaces.map { if (it.id == surfaceId) change(it, p.output) else it }) }
 }
