@@ -65,7 +65,7 @@ private fun cornerName(i: Int, count: Int) = if (count == 4) CORNER_NAMES[i] els
 
 /** Live alignment: drag surfaces and corners here and the projector redraws them on the wall. */
 @Composable
-fun MappingEditor(player: KnownPlayer, onDone: () -> Unit) {
+fun MappingEditor(player: KnownPlayer, selectSurface: String? = null, onDone: () -> Unit) {
     val client = remember(player) { player.client() }
     val scope = rememberCoroutineScope()
     var project by remember { mutableStateOf<Project?>(null) }
@@ -82,7 +82,8 @@ fun MappingEditor(player: KnownPlayer, onDone: () -> Unit) {
         try {
             val loaded = Mapping.forPlayer(client.project(), client.info())
             project = loaded
-            selectedSurface = Mapping.projector(loaded, player.deviceId).surfaces.firstOrNull()?.id
+            val surfaces = Mapping.projector(loaded, player.deviceId).surfaces
+            selectedSurface = (surfaces.firstOrNull { it.id == selectSurface } ?: surfaces.firstOrNull())?.id
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

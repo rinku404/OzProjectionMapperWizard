@@ -16,7 +16,7 @@ interface ShowRenderer {
     val library: MediaLibrary
 
     /** Lets the person choose any number of videos, GIFs and images and adds them to [library]; returns how many. */
-    suspend fun addToLibrary(onStep: (RenderStep) -> Unit): Int
+    suspend fun addToLibrary(groupId: String?, onStep: (RenderStep) -> Unit): Int
 
     /** A small PNG of [media], or null when its file is gone. */
     suspend fun thumbnail(media: MediaItem): ByteArray?

@@ -36,7 +36,7 @@ class DesktopRenderer(private val store: KeyValueStore, private val home: File) 
 
     override val library = MediaLibrary(store)
 
-    override suspend fun addToLibrary(onStep: (RenderStep) -> Unit): Int {
+    override suspend fun addToLibrary(groupId: String?, onStep: (RenderStep) -> Unit): Int {
         val files = withContext(Dispatchers.Main) {
             val dialog = FileDialog(null as Frame?, "Add videos, GIFs and images", FileDialog.LOAD)
             dialog.isMultipleMode = true
@@ -53,7 +53,7 @@ class DesktopRenderer(private val store: KeyValueStore, private val home: File) 
                 runCatching { render.probe(file) }.getOrNull()?.also { store.put(KEY_PREFIX + it.id, file.absolutePath) }
             }
         }
-        library.add(added)
+        library.add(added, groupId)
         if (added.isEmpty()) throw RenderException("None of those files could be read as a video, GIF or image.")
         return added.size
     }

@@ -26,4 +26,27 @@ class MediaLibraryTest {
         library.remove("a")
         assertEquals(listOf("c", "b"), MediaLibrary(store).items.value.map { it.id })
     }
+
+    @Test
+    fun groupsKeepTheirFilesAndAreRemembered() {
+        val store = MapStore()
+        val library = MediaLibrary(store)
+        library.add(listOf(item("a"), item("b"), item("c")))
+        val wall = library.createGroup("Front wall")
+        library.addToGroup(wall, listOf("c", "a", "a"))
+        library.add(listOf(item("d")), groupId = wall)
+        assertEquals(listOf("d", "a", "c"), library.itemsIn(wall).map { it.id })
+        assertEquals(4, library.itemsIn(null).size)
+
+        library.remove("a")
+        library.removeFromGroup(wall, "d")
+        library.renameGroup(wall, "Garage")
+        val reopened = MediaLibrary(store)
+        assertEquals(listOf("Garage"), reopened.groups.value.map { it.name })
+        assertEquals(listOf("c"), reopened.itemsIn(wall).map { it.id })
+
+        reopened.deleteGroup(wall)
+        assertEquals(emptyList(), reopened.groups.value)
+        assertEquals(3, reopened.items.value.size)
+    }
 }

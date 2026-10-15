@@ -6,6 +6,7 @@ import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.geometry.withCorners
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.model.Face
+import com.msc.ozprojectionmapperwizard.core.model.MediaItem
 import com.msc.ozprojectionmapperwizard.core.model.Output
 import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ProjectorMapping
@@ -38,19 +39,28 @@ object Mapping {
 
     fun projector(project: Project, projectorId: String): ProjectorMapping = project.projectors.first { it.id == projectorId }
 
-    /** Adds a face and a centred rectangle for it, offset a little from the last one so they don't stack. */
-    fun addSurface(project: Project, projectorId: String): Pair<Project, String> {
+    /**
+     * Adds a face and a centred rectangle for it, offset a little from the last one so they don't
+     * stack. With [aspect] (width over height) the rectangle has that shape, as large as fits in
+     * the usual box.
+     */
+    fun addSurface(project: Project, projectorId: String, name: String? = null, aspect: Double? = null): Pair<Project, String> {
         val mapping = projector(project, projectorId)
         require(mapping.surfaces.size < MAX_SURFACES) { "Up to $MAX_SURFACES surfaces" }
         val n = (1..Int.MAX_VALUE).first { i -> project.scene.faces.none { it.id == "face-$i" } }
-        val face = Face(id = "face-$n", name = "Surface $n")
+        val face = Face(id = "face-$n", name = name?.takeIf { it.isNotBlank() } ?: "Surface $n", aspect = aspect ?: 16.0 / 9.0)
         val w = mapping.output.width.toDouble()
         val h = mapping.output.height.toDouble()
         val shift = (mapping.surfaces.size % 4) * 0.05
-        val l = w * (0.25 + shift)
-        val t = h * (0.25 + shift)
-        val r = l + w * 0.4
-        val b = t + h * 0.4
+        var boxW = w * 0.4
+        var boxH = h * 0.4
+        if (aspect != null && aspect > 0) {
+            if (boxW / boxH > aspect) boxW = boxH * aspect else boxH = boxW / aspect
+        }
+        val l = w * (0.25 + shift) + (w * 0.4 - boxW) / 2
+        val t = h * (0.25 + shift) + (h * 0.4 - boxH) / 2
+        val r = l + boxW
+        val b = t + boxH
         val surface = Surface(
             id = "surface-$n",
             faceId = face.id,
@@ -60,6 +70,17 @@ object Mapping {
             .copy(scene = project.scene.copy(faces = project.scene.faces + face))
             .updateProjector(projectorId) { it.copy(surfaces = it.surfaces + surface) }
         return updated to surface.id
+    }
+
+    /**
+     * Adds a surface shaped like [media] (same width to height), named after the file and already
+     * showing it, ready to be dragged into place.
+     */
+    fun addSurfaceFor(project: Project, projectorId: String, media: MediaItem): Pair<Project, String> {
+        val aspect = if (media.width > 0 && media.height > 0) media.width.toDouble() / media.height else null
+        val (added, surfaceId) = addSurface(project, projectorId, media.fileName.substringBeforeLast('.'), aspect)
+        val faceId = projector(added, projectorId).surfaces.first { it.id == surfaceId }.faceId
+        return Content.setMedia(added, faceId, media) to surfaceId
     }
 
     /** Removes the surface, and its face if no other projector uses it. */
