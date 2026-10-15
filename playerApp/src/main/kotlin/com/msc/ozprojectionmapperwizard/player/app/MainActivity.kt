@@ -45,6 +45,8 @@ class MainActivity : Activity() {
     private var updateCheck: Job? = null
     private var hideUpdateText: Job? = null
     private var currentFile: String? = null
+    /** Until when the PIN and address show over a playing show, after an arrow key on the remote. */
+    private var pairingInfoUntil = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -99,9 +101,18 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    /** OK on the remote checks for a new build; OK again installs it; Back closes the message. */
+    /**
+     * OK on the remote checks for a new build; OK again installs it; Back closes the message. The
+     * arrows or Menu show the PIN and address over the show, so a controller can pair again.
+     */
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_SETTINGS, KeyEvent.KEYCODE_GUIDE -> {
+                pairingInfoUntil = System.currentTimeMillis() + PAIRING_INFO_MILLIS
+                updateSetupText(player.director.playback.value)
+                return true
+            }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_BUTTON_A -> {
                 val offer = offeredUpdate
                 if (offer != null) {
@@ -113,7 +124,11 @@ class MainActivity : Activity() {
                 }
                 return true
             }
-            KeyEvent.KEYCODE_BACK -> if (updateText.visibility == View.VISIBLE) {
+            KeyEvent.KEYCODE_BACK -> if (pairingInfoUntil > 0) {
+                pairingInfoUntil = 0
+                updateSetupText(player.director.playback.value)
+                return true
+            } else if (updateText.visibility == View.VISIBLE) {
                 offeredUpdate = null
                 player.updater.clearStatus()
                 updateText.visibility = View.GONE
@@ -172,14 +187,22 @@ class MainActivity : Activity() {
         }
         val setup = playback.nowPlaying.reason == PlayReason.NO_SHOW
         testPattern.visibility = if (setup) View.VISIBLE else View.GONE
-        setupText.visibility = if (setup) View.VISIBLE else View.GONE
         updateSetupText(playback)
     }
 
+    /** The setup screen when there is no show; over a show, the PIN and address for a while after an arrow key. */
     private fun updateSetupText(playback: Playback) {
-        if (playback.nowPlaying.reason != PlayReason.NO_SHOW) return
+        val setup = playback.nowPlaying.reason == PlayReason.NO_SHOW
+        if (pairingInfoUntil != 0L && System.currentTimeMillis() > pairingInfoUntil) pairingInfoUntil = 0
+        val showInfo = !setup && pairingInfoUntil != 0L
+        setupText.visibility = if (setup || showInfo) View.VISIBLE else View.GONE
+        if (!setup && !showInfo) return
         val address = localAddress()?.let { "http://$it:${PlayerProtocol.DEFAULT_PORT}" } ?: "Not connected to Wi-Fi"
-        setupText.text = "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\nWaiting for a show\n\nPress OK on the remote to check for updates"
+        setupText.text = if (setup) {
+            "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\nWaiting for a show\n\nPress OK on the remote to check for updates"
+        } else {
+            "PIN  ${player.pairing.pin}\n$address\n\nPair a controller with this PIN\nBack to hide"
+        }
     }
 
     private fun localAddress(): String? =
@@ -188,4 +211,8 @@ class MainActivity : Activity() {
             .flatMap { it.inetAddresses.toList() }
             .firstOrNull { it is Inet4Address && it.isSiteLocalAddress }
             ?.hostAddress
+
+    private companion object {
+        const val PAIRING_INFO_MILLIS = 120_000L
+    }
 }
