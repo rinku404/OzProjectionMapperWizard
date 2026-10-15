@@ -60,6 +60,7 @@ fun App(platform: ControllerPlatform) {
     var openDeviceId by remember { mutableStateOf<String?>(null) }
     var aligning by remember { mutableStateOf(false) }
     var editingContent by remember { mutableStateOf(false) }
+    var alignSurface by remember { mutableStateOf<String?>(null) }
 
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
@@ -68,9 +69,14 @@ fun App(platform: ControllerPlatform) {
                     val player = openDeviceId?.let { id -> known.players.collectAsState().value.firstOrNull { it.deviceId == id } }
                     when {
                         player == null -> ProjectorList(platform, known, onOpen = { openDeviceId = it.deviceId })
-                        aligning -> MappingEditor(player, onDone = { aligning = false })
+                        aligning -> MappingEditor(player, alignSurface, onDone = { aligning = false; alignSurface = null })
+                        // Aligning from here comes back here afterwards.
                         editingContent && platform.renderer != null ->
-                            ContentEditor(platform, platform.renderer!!, player, onDone = { editingContent = false })
+                            ContentEditor(
+                                platform, platform.renderer!!, player,
+                                onAlign = { surfaceId -> alignSurface = surfaceId; aligning = true },
+                                onDone = { editingContent = false },
+                            )
                         else -> ProjectorScreen(
                             platform, known, player,
                             onBack = { openDeviceId = null },

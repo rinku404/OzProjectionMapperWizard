@@ -1,6 +1,8 @@
 package com.msc.ozprojectionmapperwizard.controller
 
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
+import com.msc.ozprojectionmapperwizard.core.model.MediaItem
+import com.msc.ozprojectionmapperwizard.core.model.MediaKind
 import com.msc.ozprojectionmapperwizard.core.model.validate
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
 import com.msc.ozprojectionmapperwizard.core.protocol.NowPlaying
@@ -33,6 +35,22 @@ class MappingTest {
         assertEquals(listOf("Surface 1", "Surface 2", "Surface 3"), project.scene.faces.map { it.name })
         val corners = Mapping.projector(project, "hy300").surfaces.map { Mapping.corners(it)[0] }
         assertEquals(3, corners.toSet().size)
+    }
+
+    @Test
+    fun aSurfaceFromAnImageHasItsShapeAndShowsIt() {
+        val project = Mapping.addSurface(Mapping.forPlayer(null, info), "hy300").first
+        val tall = MediaItem("tall", "Window.png", MediaKind.IMAGE, 300, 600)
+        val (added, id) = Mapping.addSurfaceFor(project, "hy300", tall)
+        assertEquals(emptyList(), added.validate())
+        val surface = Mapping.projector(added, "hy300").surfaces.first { it.id == id }
+        val c = Mapping.corners(surface)
+        assertEquals(0.5, (c[1].x - c[0].x) / (c[3].y - c[0].y), 1e-9)
+        assertTrue(c.all { it.x in 0.0..1280.0 && it.y in 0.0..720.0 })
+        val face = added.scene.faces.first { it.id == surface.faceId }
+        assertEquals("Window", face.name)
+        assertEquals(0.5, face.aspect, 1e-9)
+        assertEquals(tall, Content.mediaFor(added, face.id))
     }
 
     @Test

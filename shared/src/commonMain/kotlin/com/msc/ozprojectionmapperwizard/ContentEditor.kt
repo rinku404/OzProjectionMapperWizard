@@ -43,7 +43,13 @@ import kotlin.math.roundToInt
 
 /** Choose what plays on each surface, then render it on this device and send it to loop on the projector. */
 @Composable
-fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: KnownPlayer, onDone: () -> Unit) {
+fun ContentEditor(
+    platform: ControllerPlatform,
+    renderer: ShowRenderer,
+    player: KnownPlayer,
+    onAlign: (surfaceId: String) -> Unit,
+    onDone: () -> Unit,
+) {
     val client = remember(player) { player.client() }
     val scope = rememberCoroutineScope()
     var project by remember { mutableStateOf<Project?>(null) }
@@ -53,6 +59,7 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var pickingFace by remember { mutableStateOf<String?>(null) }
+    var addingSurface by remember { mutableStateOf(false) }
 
     LaunchedEffect(player) {
         try {
@@ -106,6 +113,26 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
         )
         return
     }
+    if (addingSurface && forPicker != null) {
+        MediaPicker(
+            renderer, forPicker, player.deviceId, faceId = null,
+            onPick = { media ->
+                addingSurface = false
+                work {
+                    val (added, surfaceId) = Mapping.addSurfaceFor(forPicker, player.deviceId, media)
+                    if (lengthText.isBlank() || forPicker.scene.cues.isEmpty()) lengthText = formatSeconds(Content.suggestedDuration(added))
+                    val ready = withLength(added)
+                    project = ready
+                    step = RenderStep("Saving on the projector…")
+                    client.saveProject(ready)
+                    // Straight on to the wall, with the new surface picked, to drag it into place.
+                    onAlign(surfaceId)
+                }
+            },
+            onCancel = { addingSurface = false },
+        )
+        return
+    }
 
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onDone, enabled = !busy) { Text("‹ ${player.name}") }
@@ -132,8 +159,24 @@ fun ContentEditor(platform: ControllerPlatform, renderer: ShowRenderer, player: 
                 notice = "Imported ${loaded.export.surfaces.size} surfaces from Blender. Drag their corners into place in \"Align mapping live on the wall\", then come back here to render."
             }
         }) { Text("Import surfaces from Blender…") }
+        OutlinedButton(
+            enabled = !busy && mapping.surfaces.size < Mapping.MAX_SURFACES,
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { addingSurface = true },
+        ) { Text("New surface from an image…") }
         if (mapping.surfaces.isEmpty()) {
-            Text("There are no surfaces yet. Import them from Blender, or add them in \"Align mapping live on the wall\".")
+            Text("There are no surfaces yet. Make one from an image, import them from Blender, or add them in \"Align mapping live on the wall\".")
+        }
+
+        if (mapping.surfaces.isNotEmpty()) {
+            TextButton(enabled = !busy, onClick = {
+                work {
+                    val ready = withLength(current)
+                    project = ready
+                    client.saveProject(ready)
+                    onAlign(mapping.surfaces.first().id)
+                }
+            }) { Text("Move surfaces on the wall…") }
         }
 
         mapping.surfaces.forEach { surface ->
