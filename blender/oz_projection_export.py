@@ -147,6 +147,28 @@ def face_names(faces):
     return names
 
 
+def scene_is_animated(scene):
+    """Whether anything in the scene has keyframes or drivers, so its frames differ."""
+    def moves(owner):
+        data = getattr(owner, "animation_data", None)
+        return bool(data and (data.action or len(data.drivers)))
+
+    def tree_moves(owner):
+        return bool(getattr(owner, "node_tree", None) and moves(owner.node_tree))
+
+    if moves(scene) or (scene.world and (moves(scene.world) or tree_moves(scene.world))):
+        return True
+    for obj in scene.objects:
+        if moves(obj) or (obj.data and moves(obj.data)):
+            return True
+        if getattr(obj.data, "shape_keys", None) and moves(obj.data.shape_keys):
+            return True
+        for slot in obj.material_slots:
+            if slot.material and (moves(slot.material) or tree_moves(slot.material)):
+                return True
+    return False
+
+
 def set_media_type(image_settings, media_type):
     # Blender 5 picks image or video output first; older versions list FFMPEG among image formats.
     if hasattr(image_settings, "media_type"):
@@ -202,7 +224,9 @@ class OZ_OT_export_surfaces(bpy.types.Operator):
 
         fps = scene.render.fps / scene.render.fps_base
         frames = scene.frame_end - scene.frame_start + 1
-        animated = frames > 1
+        # A new scene spans 250 frames even with nothing moving; rendering all of them for every
+        # face kept Blender busy for ages, so only a scene that really moves becomes videos.
+        animated = frames > 1 and scene_is_animated(scene)
         duration = frames / fps if animated else 10.0
 
         names = face_names(faces)
@@ -1137,7 +1161,7 @@ class OZ_PT_export_panel(bpy.types.Panel):
         box.prop(settings, "max_size")
         box.prop(settings, "depth")
         box.operator(OZ_OT_export_surfaces.bl_idname)
-        box.label(text="Each face renders the whole animation.")
+        box.label(text="Animated scenes render each face as a video.")
 
         box = layout.box()
         box.label(text="Papercraft", icon="FILE_IMAGE")
