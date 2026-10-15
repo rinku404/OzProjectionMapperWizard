@@ -45,6 +45,7 @@ import com.msc.ozprojectionmapperwizard.controller.Mapping
 import com.msc.ozprojectionmapperwizard.core.geometry.corners
 import com.msc.ozprojectionmapperwizard.core.geometry.polygonWarp
 import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
+import com.msc.ozprojectionmapperwizard.core.model.CornerRef
 import com.msc.ozprojectionmapperwizard.core.model.Project
 import com.msc.ozprojectionmapperwizard.core.model.ProjectorMapping
 import com.msc.ozprojectionmapperwizard.core.model.Warp
@@ -153,11 +154,12 @@ fun MappingEditor(player: KnownPlayer, selectSurface: String? = null, onDone: ()
                 selectedSurface = surface
                 selectedCorner = corner
             },
-            onMoveCorner = { surface, corner, to -> edit { Mapping.moveCorner(it, player.deviceId, surface, corner, to) } },
+            onMoveCorner = { surface, corner, to, snap -> edit { Mapping.moveCorner(it, player.deviceId, surface, corner, to, snap) } },
+            onDropCorner = { surface, corner -> edit { Mapping.tieTouching(it, player.deviceId, CornerRef(surface, corner)) } },
             onMoveSurface = { surface, delta -> edit { Mapping.moveSurface(it, player.deviceId, surface, delta) } },
         )
         Text(
-            "Drag a corner to move it, or drag inside a surface to move all of it. Use the arrows below for the last few pixels.",
+            "Drag a corner to move it, or drag inside a surface to move all of it. Drop a corner onto another surface's corner to tie them; tied corners (white dot) move together. Use the arrows below for the last few pixels.",
             style = MaterialTheme.typography.bodySmall,
         )
 
@@ -224,6 +226,22 @@ fun MappingEditor(player: KnownPlayer, selectSurface: String? = null, onDone: ()
                     OutlinedButton(onClick = { nudge(0.0, 1.0) }) { Text("↓") }
                     OutlinedButton(onClick = { nudge(1.0, 0.0) }) { Text("→") }
                 }
+                val ref = CornerRef(surface.id, corner)
+                val tied = Mapping.tiedTo(mapping, ref) - ref
+                if (tied.isNotEmpty()) {
+                    val names = tied.joinToString { t ->
+                        val other = mapping.surfaces.firstOrNull { it.id == t.surfaceId }
+                        val otherName = current.scene.faces.firstOrNull { it.id == other?.faceId }?.name ?: t.surfaceId
+                        "$otherName ${cornerName(t.corner, other?.let { Mapping.corners(it).size } ?: 4).lowercase()}"
+                    }
+                    Text("Tied to $names", style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { edit { Mapping.untie(it, player.deviceId, ref) } }) { Text("Untie this corner") }
+                } else {
+                    OutlinedButton(
+                        enabled = mapping.surfaces.size > 1,
+                        onClick = { edit { Mapping.tieToNearest(it, player.deviceId, ref, mapping.output.width * 0.2) } },
+                    ) { Text("Tie to the nearest corner of another surface") }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(1.0, 10.0).forEach { s ->
                         val label = "${s.toInt()} px"
@@ -242,7 +260,8 @@ private fun MappingCanvas(
     selectedSurface: String?,
     selectedCorner: Int?,
     onSelect: (String?, Int?) -> Unit,
-    onMoveCorner: (String, Int, Vec2) -> Unit,
+    onMoveCorner: (surface: String, corner: Int, to: Vec2, snap: Double) -> Unit,
+    onDropCorner: (surface: String, corner: Int) -> Unit,
     onMoveSurface: (String, Vec2) -> Unit,
 ) {
     val output = mapping.output
@@ -277,12 +296,14 @@ private fun MappingCanvas(
                         surface = if (corner == null) Mapping.surfaceAt(latest, pointer) else null
                         corner?.let { onSelect(it.first, it.second) } ?: onSelect(surface, null)
                     },
+                    onDragEnd = { corner?.let { (s, c) -> onDropCorner(s, c) } },
                     onDrag = { change, amount ->
                         change.consume()
                         val scale = size.width.toDouble() / output.width
                         val delta = Vec2(amount.x / scale, amount.y / scale)
                         pointer += delta
-                        corner?.let { (s, c) -> onMoveCorner(s, c, pointer) }
+                        // Snaps onto another surface's corner from half a finger away.
+                        corner?.let { (s, c) -> onMoveCorner(s, c, pointer, touchRadius / scale / 2) }
                         surface?.let { onMoveSurface(it, delta) }
                     },
                 )
@@ -306,6 +327,9 @@ private fun MappingCanvas(
                     center = Offset(p.x.toFloat() * scale, p.y.toFloat() * scale),
                     style = if (isSelected) Stroke(3f) else androidx.compose.ui.graphics.drawscope.Fill,
                 )
+                if (Mapping.isTied(mapping, CornerRef(surface.id, i))) {
+                    drawCircle(Color.White, radius = 3.5f, center = Offset(p.x.toFloat() * scale, p.y.toFloat() * scale))
+                }
             }
         }
     }
