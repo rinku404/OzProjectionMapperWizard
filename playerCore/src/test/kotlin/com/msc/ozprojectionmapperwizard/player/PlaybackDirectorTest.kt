@@ -38,6 +38,24 @@ class PlaybackDirectorTest {
     }
 
     @Test
+    fun homeShowsTheSetupScreenUntilResumedOrANewShowArrives() {
+        install("ambient")
+        director.refresh()
+        director.home()
+        assertEquals(PlayReason.NO_SHOW, director.playback.value.nowPlaying.reason)
+        director.refresh()
+        assertEquals(PlayReason.NO_SHOW, director.playback.value.nowPlaying.reason)
+        director.resumeSchedule()
+        assertEquals("ambient", director.playback.value.nowPlaying.showId)
+
+        director.home()
+        install("new")
+        storage.saveSchedule(Schedule(default = "new"))
+        director.showInstalled()
+        assertEquals("new", director.playback.value.nowPlaying.showId)
+    }
+
+    @Test
     fun followsTheScheduleAndOffHours() {
         install("ambient")
         install("evening")

@@ -163,7 +163,7 @@ class PlayerServer(
                     val manifest = call.receive<ShowManifest>()
                     require(manifest.id == call.parameters["id"]) { "Show id in the path and body differ" }
                     storage.installShow(manifest)
-                    director.refresh()
+                    director.showInstalled()
                     call.respond(HttpStatusCode.OK, info())
                 }
                 delete("/shows/{id}") {

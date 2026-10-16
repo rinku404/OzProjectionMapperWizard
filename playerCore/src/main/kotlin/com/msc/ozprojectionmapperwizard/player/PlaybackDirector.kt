@@ -24,6 +24,8 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
     private sealed interface Override {
         data class Show(val id: String) : Override
         data object Black : Override
+        /** Back on the remote: the setup screen with the PIN, until the show is resumed or a new one arrives. */
+        data object Home : Override
     }
 
     @Volatile private var override: Override? = null
@@ -39,6 +41,21 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
 
     fun black() {
         override = Override.Black
+        refresh()
+    }
+
+    /** Leaves the show for the setup screen, with its PIN and address. */
+    fun home() {
+        override = Override.Home
+        refresh()
+    }
+
+    /** True while [home] holds the setup screen over an installed show. */
+    val isHome: Boolean get() = override == Override.Home
+
+    /** A newly installed show plays straight away, even from the setup screen. */
+    fun showInstalled() {
+        if (override == Override.Home) override = null
         refresh()
     }
 
@@ -63,6 +80,7 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
     private fun compute(): Playback {
         when (val o = override) {
             is Override.Black -> return Playback(NowPlaying(null, PlayReason.BLACK))
+            is Override.Home -> return Playback(NowPlaying(null, PlayReason.NO_SHOW))
             is Override.Show -> storage.show(o.id)?.let { return playing(it, PlayReason.OVERRIDE) }
             null -> Unit
         }

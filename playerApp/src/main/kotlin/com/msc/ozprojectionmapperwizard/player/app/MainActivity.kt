@@ -2,11 +2,13 @@ package com.msc.ozprojectionmapperwizard.player.app
 
 import android.app.Activity
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
+import android.window.OnBackInvokedDispatcher
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -69,6 +71,11 @@ class MainActivity : Activity() {
         }
         playerView.player = exo
 
+        // Newer Android sends Back here instead of to onKeyDown.
+        if (Build.VERSION.SDK_INT >= 36) {
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) { handleBack() }
+        }
+
         PlayerService.start(this)
         scope.launch { player.director.playback.collect { show(it) } }
         // Live alignment covers the show while a controller is connected, then the show carries on.
@@ -124,18 +131,32 @@ class MainActivity : Activity() {
                 }
                 return true
             }
-            KeyEvent.KEYCODE_BACK -> if (pairingInfoUntil > 0) {
+            KeyEvent.KEYCODE_BACK -> if (handleBack()) return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    /**
+     * Back closes a message first; otherwise it leaves the show for the setup screen with the PIN
+     * and address, and from there goes back to the show. False when there is nothing to do.
+     */
+    private fun handleBack(): Boolean {
+        val director = player.director
+        when {
+            pairingInfoUntil > 0 -> {
                 pairingInfoUntil = 0
-                updateSetupText(player.director.playback.value)
-                return true
-            } else if (updateText.visibility == View.VISIBLE) {
+                updateSetupText(director.playback.value)
+            }
+            updateText.visibility == View.VISIBLE -> {
                 offeredUpdate = null
                 player.updater.clearStatus()
                 updateText.visibility = View.GONE
-                return true
             }
+            director.isHome -> director.resumeSchedule()
+            director.playback.value.nowPlaying.reason != PlayReason.NO_SHOW -> director.home()
+            else -> return false
         }
-        return super.onKeyDown(keyCode, event)
+        return true
     }
 
     private fun checkForUpdate() {
@@ -199,7 +220,8 @@ class MainActivity : Activity() {
         if (!setup && !showInfo) return
         val address = localAddress()?.let { "http://$it:${PlayerProtocol.DEFAULT_PORT}" } ?: "Not connected to Wi-Fi"
         setupText.text = if (setup) {
-            "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\nWaiting for a show\n\nPress OK on the remote to check for updates"
+            val waiting = if (player.director.isHome) "Press Back to return to the show" else "Waiting for a show"
+            "${getString(R.string.app_name)}\n\nPIN  ${player.pairing.pin}\n$address\n\n$waiting\n\nPress OK on the remote to check for updates"
         } else {
             "PIN  ${player.pairing.pin}\n$address\n\nPair a controller with this PIN\nBack to hide"
         }
