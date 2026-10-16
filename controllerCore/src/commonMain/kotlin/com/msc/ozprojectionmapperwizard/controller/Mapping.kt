@@ -100,6 +100,7 @@ object Mapping {
                 faces = withoutSurface.scene.faces.filterNot { it.id == faceId },
                 cues = withoutSurface.scene.cues.filterNot { it.faceId == faceId },
             ),
+            triggers = withoutSurface.triggers.filterNot { it.faceId == faceId },
         )
     }
 

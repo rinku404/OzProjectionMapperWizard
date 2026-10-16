@@ -46,6 +46,7 @@ import com.msc.ozprojectionmapperwizard.controller.PlayerException
 import com.msc.ozprojectionmapperwizard.controller.RenderException
 import com.msc.ozprojectionmapperwizard.controller.SendProgress
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
+import com.msc.ozprojectionmapperwizard.core.model.Trigger
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
 import com.msc.ozprojectionmapperwizard.controller.AppUpdates
@@ -250,6 +251,7 @@ private fun ProjectorScreen(
     var confirmForget by remember { mutableStateOf(false) }
     var watchingUpdate by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    var triggers by remember { mutableStateOf<List<Trigger>>(emptyList()) }
 
     fun act(label: String, action: suspend () -> DeviceInfo?) {
         if (busy) return
@@ -274,6 +276,10 @@ private fun ProjectorScreen(
     }
 
     LaunchedEffect(player) { act("Connecting…") { client.info() } }
+    // Triggers live in the project saved on the projector, so the phone can fire them too.
+    LaunchedEffect(player) {
+        triggers = runCatching { client.project()?.triggers.orEmpty() }.getOrDefault(emptyList()).filter { it.showId != null }
+    }
 
     // While the projector updates itself, show its progress until it restarts or finishes.
     LaunchedEffect(watchingUpdate) {
@@ -364,7 +370,19 @@ private fun ProjectorScreen(
             OutlinedButton(enabled = !busy, onClick = { act("Refreshing…") { client.info() } }) { Text("Refresh") }
         }
 
-        info?.shows?.takeIf { it.isNotEmpty() }?.let { shows ->
+        if (triggers.isNotEmpty()) {
+            Text("Triggered animations", style = MaterialTheme.typography.titleMedium)
+            triggers.forEach { trigger ->
+                Card(Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("⚡ ${trigger.name}", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
+                        Button(enabled = !busy, onClick = { act("Firing ${trigger.name}…") { client.play(trigger.showId!!) } }) { Text("Fire") }
+                    }
+                }
+            }
+        }
+
+        info?.shows?.filterNot { it.oneShot }?.takeIf { it.isNotEmpty() }?.let { shows ->
             Text("Shows on the projector", style = MaterialTheme.typography.titleMedium)
             shows.forEach { show ->
                 Card(Modifier.fillMaxWidth()) {

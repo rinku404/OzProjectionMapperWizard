@@ -16,4 +16,6 @@ data class ShowManifest(
     val codec: String = "h264",
     val projectorId: String,
     val projectVersion: Int = Project.CURRENT_VERSION,
+    /** A triggered animation: plays once when asked, then the schedule carries on. The schedule never picks it. */
+    val oneShot: Boolean = false,
 )

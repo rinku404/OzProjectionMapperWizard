@@ -75,9 +75,9 @@ object Content {
         return ceil(longest).coerceIn(MIN_SECONDS, MAX_SECONDS)
     }
 
-    /** Media that some face still uses, so the project doesn't keep files nobody plays. */
+    /** Media that some face or trigger still uses, so the project doesn't keep files nobody plays. */
     private fun Project.pruneMedia(): Project {
-        val used = scene.cues.map { it.mediaId }.toSet()
+        val used = scene.cues.map { it.mediaId }.toSet() + triggers.map { it.mediaId }
         return copy(media = media.filter { it.id in used })
     }
 }

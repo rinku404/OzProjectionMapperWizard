@@ -13,8 +13,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** What the screen should show right now. [file] is null for black or the setup screen. */
-data class Playback(val nowPlaying: NowPlaying, val show: ShowManifest? = null, val file: File? = null)
+/**
+ * What the screen should show right now. [file] is null for black or the setup screen. A [once]
+ * show plays to its end and is then reported with [PlaybackDirector.finished]; [firing] counts
+ * how often it was fired, so firing it again while it plays starts it over.
+ */
+data class Playback(
+    val nowPlaying: NowPlaying,
+    val show: ShowManifest? = null,
+    val file: File? = null,
+    val once: Boolean = false,
+    val firing: Int = 0,
+)
 
 /**
  * Decides what plays: a controller override, otherwise the schedule, otherwise the setup screen.
@@ -29,12 +39,14 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
     }
 
     @Volatile private var override: Override? = null
+    @Volatile private var firings = 0
     private val state = MutableStateFlow(compute())
     val playback: StateFlow<Playback> = state.asStateFlow()
 
     fun play(showId: String): Boolean {
         if (storage.show(showId) == null) return false
         override = Override.Show(showId)
+        firings++
         refresh()
         return true
     }
@@ -57,6 +69,15 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
     fun showInstalled() {
         if (override == Override.Home) override = null
         refresh()
+    }
+
+    /** A once show reached its end: the schedule takes over again. */
+    fun finished(showId: String) {
+        val o = override
+        if (o is Override.Show && o.id == showId && storage.show(showId)?.oneShot == true) {
+            override = null
+            refresh()
+        }
     }
 
     fun resumeSchedule() {
@@ -87,7 +108,7 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
         val schedule = storage.schedule()
         val at = clock.scheduleTime()
         if (schedule.offHours?.contains(at.minuteOfDay) == true) return Playback(NowPlaying(null, PlayReason.OFF_HOURS))
-        val shows = storage.shows()
+        val shows = storage.shows().filterNot { it.oneShot }
         val chosen = schedule.resolve(at)?.let { id -> shows.firstOrNull { it.id == id } }
             // With no usable schedule yet, a freshly uploaded show should just play.
             ?: shows.singleOrNull()
@@ -95,5 +116,9 @@ class PlaybackDirector(private val storage: PlayerStorage, private val clock: Pl
     }
 
     private fun playing(show: ShowManifest, reason: PlayReason) =
-        Playback(NowPlaying(show.id, reason), show, storage.file(show.sha256))
+        if (show.oneShot && reason == PlayReason.OVERRIDE) {
+            Playback(NowPlaying(show.id, reason), show, storage.file(show.sha256), once = true, firing = firings)
+        } else {
+            Playback(NowPlaying(show.id, reason), show, storage.file(show.sha256))
+        }
 }
