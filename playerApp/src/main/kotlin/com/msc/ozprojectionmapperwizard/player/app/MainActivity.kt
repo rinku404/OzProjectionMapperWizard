@@ -4,6 +4,7 @@ import android.app.Activity
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.View
 import android.view.WindowManager
@@ -47,6 +48,12 @@ class MainActivity : Activity() {
     private var updateCheck: Job? = null
     private var hideUpdateText: Job? = null
     private var currentFile: String? = null
+    private var currentOnce = false
+    private var lastFiring = -1
+    /** Where the looping show was when a trigger interrupted it, so it carries on in time afterwards. */
+    private var loopResume: LoopResume? = null
+
+    private class LoopResume(val file: String, val positionMs: Long, val atMs: Long)
     /** Until when the PIN and address show over a playing show, after an arrow key on the remote. */
     private var pairingInfoUntil = 0L
 
@@ -70,6 +77,13 @@ class MainActivity : Activity() {
             volume = 0f
         }
         playerView.player = exo
+        // A triggered animation hands back to the schedule when it ends.
+        exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                val playback = player.director.playback.value
+                if (state == Player.STATE_ENDED && playback.once) playback.nowPlaying.showId?.let(player.director::finished)
+            }
+        })
 
         // Newer Android sends Back here instead of to onKeyDown.
         if (Build.VERSION.SDK_INT >= 36) {
@@ -194,14 +208,32 @@ class MainActivity : Activity() {
         val file = playback.file
         if (file != null && file.exists()) {
             if (file.path != currentFile) {
+                val previous = currentFile
+                if (playback.once && !currentOnce && previous != null) {
+                    loopResume = LoopResume(previous, exo.currentPosition, SystemClock.elapsedRealtime())
+                }
+                var startMs = 0L
+                val back = loopResume
+                if (!playback.once && back != null) {
+                    val loopMs = ((playback.show?.durationSeconds ?: 0.0) * 1000).toLong()
+                    if (back.file == file.path && loopMs > 0) startMs = (back.positionMs + SystemClock.elapsedRealtime() - back.atMs) % loopMs
+                    loopResume = null
+                }
                 currentFile = file.path
-                exo.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
+                exo.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)), startMs)
                 exo.prepare()
+            } else if (playback.once && playback.firing != lastFiring) {
+                // Fired again while playing: start over.
+                exo.seekTo(0)
             }
+            currentOnce = playback.once
+            lastFiring = playback.firing
+            exo.repeatMode = if (playback.once) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
             exo.playWhenReady = !player.live.isLive
             playerView.visibility = View.VISIBLE
         } else {
             currentFile = null
+            currentOnce = false
             exo.stop()
             exo.clearMediaItems()
             playerView.visibility = View.INVISIBLE

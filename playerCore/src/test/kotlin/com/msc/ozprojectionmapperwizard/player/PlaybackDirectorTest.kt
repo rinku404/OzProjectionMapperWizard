@@ -56,6 +56,26 @@ class PlaybackDirectorTest {
     }
 
     @Test
+    fun aTriggerPlaysOnceThenTheShowCarriesOn() {
+        install("ambient")
+        storage.installShow(manifest("boom", storage.addFile("boom".toByteArray())).copy(oneShot = true))
+        director.refresh()
+        // The schedule ignores triggers, so the only real show still plays by itself.
+        assertEquals("ambient", director.playback.value.nowPlaying.showId)
+
+        director.play("boom")
+        val first = director.playback.value
+        assertEquals("boom", first.nowPlaying.showId)
+        assertEquals(true, first.once)
+        director.play("boom")
+        assertEquals(first.firing + 1, director.playback.value.firing)
+
+        director.finished("boom")
+        assertEquals("ambient", director.playback.value.nowPlaying.showId)
+        assertEquals(false, director.playback.value.once)
+    }
+
+    @Test
     fun followsTheScheduleAndOffHours() {
         install("ambient")
         install("evening")

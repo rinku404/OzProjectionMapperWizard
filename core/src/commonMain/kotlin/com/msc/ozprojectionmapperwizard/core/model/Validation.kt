@@ -16,6 +16,11 @@ fun Project.validate(): List<String> = buildList {
         if (cue.fadeInSeconds + cue.fadeOutSeconds > cue.durationSeconds) add("Cue $i fades are longer than the cue")
     }
 
+    triggers.forEach { t ->
+        if (t.faceId !in faceIds) add("Trigger '${t.name}' uses unknown face '${t.faceId}'")
+        if (t.mediaId !in mediaIds) add("Trigger '${t.name}' uses unknown media '${t.mediaId}'")
+    }
+
     projectors.forEach { p ->
         if (p.output.width <= 0 || p.output.height <= 0 || p.output.fps <= 0) add("Projector '${p.id}' has an invalid output")
         duplicates(p.surfaces.map { it.id }).forEach { add("Projector '${p.id}' has duplicate surface id '$it'") }

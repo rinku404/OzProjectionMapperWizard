@@ -66,6 +66,7 @@ fun MediaPicker(
     faceId: String?,
     onPick: (MediaItem) -> Unit,
     onCancel: () -> Unit,
+    forTrigger: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val library = renderer.library
@@ -125,7 +126,20 @@ fun MediaPicker(
 
     Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onCancel, enabled = !busy) { Text("‹ Back without changing") }
-        Text(if (faceId == null) "New surface from a file" else "Choose for $faceName", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            when {
+                faceId == null -> "New surface from a file"
+                forTrigger -> "Triggered animation for $faceName"
+                else -> "Choose for $faceName"
+            },
+            style = MaterialTheme.typography.headlineMedium,
+        )
+        if (forTrigger) {
+            Text(
+                "Pick an animation, like the TNT explosion. Firing it plays it once on $faceName, then the show carries on.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
         if (faceId == null) {
             Text(
                 "Pick an image or video. You get a new surface with the same shape, already showing it, to drag into place on the wall.",
@@ -153,7 +167,13 @@ fun MediaPicker(
                     Text("Shape ${describeAspect(chosen)}", style = MaterialTheme.typography.bodySmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(enabled = !busy && !full && renderer.hasMedia(chosen.id), onClick = { onPick(chosen) }) {
-                            Text(if (faceId == null) "Make this surface" else "Use on $faceName")
+                            Text(
+                                when {
+                                    faceId == null -> "Make this surface"
+                                    forTrigger -> "Add as a trigger"
+                                    else -> "Use on $faceName"
+                                },
+                            )
                         }
                         OutlinedButton(enabled = !busy, onClick = {
                             library.remove(chosen.id)

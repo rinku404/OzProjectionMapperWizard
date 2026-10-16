@@ -18,11 +18,26 @@ data class Project(
     val media: List<MediaItem> = emptyList(),
     val scene: Scene = Scene(),
     val projectors: List<ProjectorMapping> = emptyList(),
+    /** One-shot animations that can be fired on a face, each rendered as its own show. */
+    val triggers: List<Trigger> = emptyList(),
 ) {
     companion object {
         const val CURRENT_VERSION = 1
     }
 }
+
+/**
+ * Plays [mediaId] once on [faceId] when fired, over the rest of the mapping. [showId] is the
+ * rendered show on the projector, null until it has been rendered and sent.
+ */
+@Serializable
+data class Trigger(
+    val id: String,
+    val name: String,
+    val faceId: String,
+    val mediaId: String,
+    val showId: String? = null,
+)
 
 /** A media file, identified by the sha256 of its bytes so it is never uploaded twice. */
 @Serializable

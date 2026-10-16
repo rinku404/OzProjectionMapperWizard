@@ -6,7 +6,6 @@ import com.msc.ozprojectionmapperwizard.controller.LoadedExport
 import com.msc.ozprojectionmapperwizard.controller.MediaLibrary
 import com.msc.ozprojectionmapperwizard.controller.PickedVideo
 import com.msc.ozprojectionmapperwizard.controller.RenderException
-import com.msc.ozprojectionmapperwizard.controller.SendVideo
 import com.msc.ozprojectionmapperwizard.controller.ShowRender
 import com.msc.ozprojectionmapperwizard.core.model.MediaItem
 import com.msc.ozprojectionmapperwizard.core.model.Project
@@ -101,10 +100,11 @@ class DesktopRenderer(private val store: KeyValueStore, private val home: File) 
 
     override fun hasMedia(mediaId: String): Boolean = fileOf(mediaId)?.isFile == true
 
-    override suspend fun render(project: Project, mapping: ProjectorMapping, onStep: (RenderStep) -> Unit): PickedVideo {
+    override suspend fun render(project: Project, mapping: ProjectorMapping, fileName: String, onStep: (RenderStep) -> Unit): PickedVideo {
         val render = tools(onStep)
         val files = project.media.mapNotNull { item -> fileOf(item.id)?.let { item.id to it } }.toMap()
-        val out = File(home, "renders/${SendVideo.MAPPED_SHOW_FILE}").apply { parentFile.mkdirs() }
+        // Kept to safe characters, since it comes from a file name the person chose.
+        val out = File(home, "renders/" + fileName.replace(Regex("[^A-Za-z0-9 ._-]"), "_")).apply { parentFile.mkdirs() }
         render.render(project, mapping, files, out) { done, total ->
             onStep(RenderStep("Rendering frame $done of $total…", done.toFloat() / total))
         }

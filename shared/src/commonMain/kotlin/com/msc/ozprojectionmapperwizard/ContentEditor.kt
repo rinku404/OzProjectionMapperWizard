@@ -1,5 +1,18 @@
 package com.msc.ozprojectionmapperwizard
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import org.jetbrains.compose.resources.ExperimentalResourceApi
+import org.jetbrains.compose.resources.decodeToImageBitmap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -38,9 +51,12 @@ import com.msc.ozprojectionmapperwizard.controller.KnownPlayer
 import com.msc.ozprojectionmapperwizard.controller.Mapping
 import com.msc.ozprojectionmapperwizard.controller.MediaLibrary
 import com.msc.ozprojectionmapperwizard.controller.SendVideo
+import com.msc.ozprojectionmapperwizard.controller.Triggers
+import com.msc.ozprojectionmapperwizard.core.geometry.Vec2
 import com.msc.ozprojectionmapperwizard.core.model.MediaItem
 import com.msc.ozprojectionmapperwizard.core.model.MediaKind
 import com.msc.ozprojectionmapperwizard.core.model.Project
+import com.msc.ozprojectionmapperwizard.core.model.ProjectorMapping
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -64,6 +80,7 @@ fun ContentEditor(
     var busy by remember { mutableStateOf(false) }
     var pickingFace by remember { mutableStateOf<String?>(null) }
     var addingSurface by remember { mutableStateOf(false) }
+    var pickingTriggerFace by remember { mutableStateOf<String?>(null) }
     var filling by remember { mutableStateOf(false) }
 
     LaunchedEffect(player) {
@@ -100,6 +117,42 @@ fun ContentEditor(
     fun withLength(p: Project): Project {
         val seconds = lengthText.replace(',', '.').toDoubleOrNull() ?: return p
         return Content.setDuration(p, seconds)
+    }
+
+    /** Renders [triggerId] over the mapping as it is now, sends it, and returns the project with its show. */
+    suspend fun sendTrigger(p: Project, triggerId: String): Project {
+        val trigger = p.triggers.first { it.id == triggerId }
+        val scene = Triggers.renderProject(p, trigger)
+        val video = renderer.render(scene, Mapping.projector(scene, player.deviceId), Triggers.fileName(trigger)) { s ->
+            step = RenderStep("Trigger \"${trigger.name}\": ${s.text}", s.fraction)
+        }
+        val showId = SendVideo.sendTrigger(client, video, trigger.name, scene.scene.durationSeconds, trigger.showId) { pr ->
+            step = RenderStep("Sending trigger \"${trigger.name}\": ${formatBytes(pr.sentBytes)} of ${formatBytes(pr.totalBytes)}", pr.fraction)
+        }
+        return Triggers.withShow(p, triggerId, showId)
+    }
+
+    val triggerFace = pickingTriggerFace
+    val forTrigger = project
+    if (triggerFace != null && forTrigger != null) {
+        MediaPicker(
+            renderer, forTrigger, player.deviceId, triggerFace,
+            onPick = { media ->
+                pickingTriggerFace = null
+                work {
+                    val (added, id) = Triggers.add(withLength(forTrigger), triggerFace, media)
+                    project = added
+                    val sent = sendTrigger(added, id)
+                    project = sent
+                    step = RenderStep("Saving on the projector…")
+                    client.saveProject(sent)
+                    notice = "Trigger \"${sent.triggers.first { it.id == id }.name}\" is on the projector. Press Fire to play it."
+                }
+            },
+            onCancel = { pickingTriggerFace = null },
+            forTrigger = true,
+        )
+        return
     }
 
     val picking = pickingFace
@@ -153,6 +206,10 @@ fun ContentEditor(
             return@Column
         }
         val mapping = Mapping.projector(current, player.deviceId)
+        if (mapping.surfaces.isNotEmpty()) {
+            MappingPreview(renderer, current, mapping, enabled = !busy) { faceId -> pickingFace = faceId }
+            Text("Click a surface in the preview to choose what plays on it.", style = MaterialTheme.typography.bodySmall)
+        }
         OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
             work {
                 val loaded = renderer.importBlender { step = it } ?: return@work
@@ -198,7 +255,7 @@ fun ContentEditor(
         mapping.surfaces.forEach { surface ->
             val face = current.scene.faces.firstOrNull { it.id == surface.faceId }
             val media = Content.mediaFor(current, surface.faceId)
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.fillMaxWidth()) { Column {
                 Row(Modifier.padding(start = 8.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (media != null) MediaThumbnail(renderer, media, Modifier.width(96.dp).padding(vertical = 8.dp))
                     Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
@@ -218,7 +275,32 @@ fun ContentEditor(
                         }
                     }
                 }
-            }
+                Triggers.forFace(current, surface.faceId).forEach { trigger ->
+                    Row(Modifier.padding(start = 12.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("⚡ ${trigger.name}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        val showId = trigger.showId
+                        TextButton(enabled = !busy && showId != null, onClick = {
+                            work {
+                                client.play(showId!!)
+                                notice = "Fired \"${trigger.name}\"."
+                            }
+                        }) { Text("Fire") }
+                        TextButton(enabled = !busy, onClick = {
+                            work {
+                                showId?.let { runCatching { client.removeShow(it) } }
+                                val updated = Triggers.remove(current, trigger.id)
+                                project = updated
+                                client.saveProject(updated)
+                            }
+                        }) { Text("Remove") }
+                    }
+                }
+                TextButton(
+                    enabled = !busy,
+                    modifier = Modifier.padding(start = 4.dp),
+                    onClick = { pickingTriggerFace = surface.faceId },
+                ) { Text("+ Triggered animation…") }
+            } }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -247,9 +329,17 @@ fun ContentEditor(
                     lengthText = formatSeconds(ready.scene.durationSeconds)
                     step = RenderStep("Saving on the projector…")
                     client.saveProject(ready)
-                    val video = renderer.render(ready, Mapping.projector(ready, player.deviceId)) { step = it }
+                    val video = renderer.render(ready, Mapping.projector(ready, player.deviceId), SendVideo.MAPPED_SHOW_FILE) { step = it }
                     SendVideo.sendRender(client, video, ready.scene.durationSeconds, platform.clock()) { p ->
                         step = RenderStep("Sending to the projector: ${formatBytes(p.sentBytes)} of ${formatBytes(p.totalBytes)}", p.fraction)
+                    }
+                    // Triggers are drawn over the mapping too, so they are redone to match it.
+                    if (ready.triggers.isNotEmpty()) {
+                        var withTriggers = ready
+                        ready.triggers.forEach { t -> withTriggers = sendTrigger(withTriggers, t.id) }
+                        project = withTriggers
+                        step = RenderStep("Saving on the projector…")
+                        client.saveProject(withTriggers)
                     }
                     notice = "Sent. The projector is looping the new show."
                 }
@@ -305,6 +395,46 @@ private fun FillFromGroup(library: MediaLibrary, enabled: Boolean, onFill: (List
                 Button(enabled = enabled && files.isNotEmpty(), onClick = { onFill(files, Content.FillOrder.SHUFFLED) }) { Text("Shuffle") }
                 OutlinedButton(enabled = enabled && files.isNotEmpty(), onClick = { onFill(files, Content.FillOrder.IN_ORDER) }) { Text("In order") }
             }
+        }
+    }
+}
+
+/** A still of the whole mapping as it will be sent; clicking a surface calls [onPickFace] with its face. */
+@OptIn(ExperimentalResourceApi::class)
+@Composable
+private fun MappingPreview(renderer: ShowRenderer, project: Project, mapping: ProjectorMapping, enabled: Boolean, onPickFace: (String) -> Unit) {
+    val output = mapping.output
+    val latest by rememberUpdatedState(mapping)
+    val latestEnabled by rememberUpdatedState(enabled)
+    val latestPick by rememberUpdatedState(onPickFace)
+    val image by produceState<ImageBitmap?>(null, project, mapping) {
+        value = try {
+            renderer.preview(project, mapping).decodeToImageBitmap()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        }
+    }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .aspectRatio(output.width.toFloat() / output.height)
+            .background(Color.Black)
+            .pointerInput(output) {
+                detectTapGestures { offset ->
+                    if (!latestEnabled) return@detectTapGestures
+                    val p = Vec2(offset.x.toDouble() / size.width * output.width, offset.y.toDouble() / size.height * output.height)
+                    Mapping.surfaceAt(latest, p)?.let { id -> latest.surfaces.firstOrNull { it.id == id }?.faceId }?.let(latestPick)
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val bitmap = image
+        if (bitmap != null) {
+            Image(bitmap, contentDescription = "Preview of the mapping", modifier = Modifier.fillMaxSize())
+        } else {
+            Text("Making a preview…", color = Color.White, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

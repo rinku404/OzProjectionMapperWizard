@@ -83,6 +83,26 @@ object SendVideo {
         return info
     }
 
+    /**
+     * Uploads a trigger's render and installs it as a one-shot show (the schedule is left alone),
+     * removing [previousShowId] if it was a different render. Returns the new show's id.
+     */
+    suspend fun sendTrigger(
+        client: PlayerClient,
+        video: PickedVideo,
+        name: String,
+        durationSeconds: Double,
+        previousShowId: String?,
+        onProgress: (SendProgress) -> Unit = {},
+    ): String {
+        upload(client, video, onProgress)
+        val info = client.info()
+        val manifest = manifestFor(video, info, durationSeconds).copy(id = "trigger-" + video.sha256.take(12), name = name, oneShot = true)
+        client.installShow(manifest)
+        if (previousShowId != null && previousShowId != manifest.id) runCatching { client.removeShow(previousShowId) }
+        return manifest.id
+    }
+
     suspend fun upload(client: PlayerClient, video: PickedVideo, onProgress: (SendProgress) -> Unit = {}) {
         val status = client.uploadStatus(video.sha256)
         if (status.complete) {

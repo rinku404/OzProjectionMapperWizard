@@ -34,5 +34,6 @@ interface ShowRenderer {
     fun hasMedia(mediaId: String): Boolean
 
     /** Renders what [mapping] shows into one video, ready to send. */
-    suspend fun render(project: Project, mapping: ProjectorMapping, onStep: (RenderStep) -> Unit): PickedVideo
+    /** Renders to [fileName], which is also the name the video is sent under. */
+    suspend fun render(project: Project, mapping: ProjectorMapping, fileName: String, onStep: (RenderStep) -> Unit): PickedVideo
 }
