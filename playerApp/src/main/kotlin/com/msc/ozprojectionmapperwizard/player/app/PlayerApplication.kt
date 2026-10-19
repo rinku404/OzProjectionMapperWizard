@@ -26,6 +26,8 @@ class PlayerApplication : Application() {
     val live = LiveSession()
     lateinit var updater: AndroidUpdater
         private set
+    /** The projected screen while it is open, for work that has to show something on it. */
+    @Volatile var activity: MainActivity? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -34,7 +36,7 @@ class PlayerApplication : Application() {
         val clock = PlayerClock(storage)
         director = PlaybackDirector(storage, clock)
         updater = AndroidUpdater(this, scope)
-        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage), live, updater)
+        server = PlayerServer(storage, pairing, clock, director, AndroidPlatformInfo(this, storage), live, updater, AndroidHdmiProbe(this), scope)
         director.start(scope)
     }
 }

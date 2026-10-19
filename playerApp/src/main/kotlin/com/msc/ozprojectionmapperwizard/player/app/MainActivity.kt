@@ -60,6 +60,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        player.activity = this
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).apply {
@@ -117,6 +118,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        if (player.activity === this) player.activity = null
         scope.cancel()
         exo.release()
         super.onDestroy()

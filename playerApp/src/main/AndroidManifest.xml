@@ -14,6 +14,10 @@
     <!-- Installs new builds of itself from GitHub releases (Android asks for confirmation each time). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Only for the HDMI input test, which checks whether the input shows up as a camera. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <!-- Projectors and TV boxes have no touchscreen. -->
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.software.leanback" android:required="false" />

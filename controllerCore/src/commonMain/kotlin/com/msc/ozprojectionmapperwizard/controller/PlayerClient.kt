@@ -6,6 +6,7 @@ import com.msc.ozprojectionmapperwizard.core.model.ShowManifest
 import com.msc.ozprojectionmapperwizard.core.protocol.ApiError
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
+import com.msc.ozprojectionmapperwizard.core.protocol.HdmiReport
 import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
@@ -121,6 +122,19 @@ class PlayerClient(
         val response = http.post("${address.baseUrl}/update") { auth(); json(UpdateRequest(downloadUrl, build)) }
         if (response.status == HttpStatusCode.NotFound || response.status == HttpStatusCode.NotImplemented) {
             throw PlayerException(response.status.value, "This projector's app is too old to update itself. Install the new one by hand once.")
+        }
+        return response.ok().body()
+    }
+
+    /** Starts the player's HDMI input test; follow it with [hdmiProbe]. */
+    suspend fun startHdmiProbe(): HdmiReport = hdmiResponse(http.post("${address.baseUrl}/hdmi/probe") { auth() })
+
+    /** What the HDMI input test has found so far. */
+    suspend fun hdmiProbe(): HdmiReport = hdmiResponse(http.get("${address.baseUrl}/hdmi/probe") { auth() })
+
+    private suspend fun hdmiResponse(response: HttpResponse): HdmiReport {
+        if (response.status == HttpStatusCode.NotFound || response.status == HttpStatusCode.NotImplemented) {
+            throw PlayerException(response.status.value, "This projector's app is too old to test HDMI input. Update it first.")
         }
         return response.ok().body()
     }

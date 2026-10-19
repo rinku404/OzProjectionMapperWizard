@@ -2,6 +2,7 @@ package com.msc.ozprojectionmapperwizard.player
 
 import com.msc.ozprojectionmapperwizard.core.ProjectJson
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
+import com.msc.ozprojectionmapperwizard.core.protocol.HdmiReport
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
 import com.msc.ozprojectionmapperwizard.core.protocol.UploadStatus
@@ -48,6 +49,29 @@ class PlayerServerTest {
         assertEquals(HttpStatusCode.OK, client.get("/info").status)
         assertEquals(HttpStatusCode.Unauthorized, client.post("/black").status)
         assertEquals(HttpStatusCode.Unauthorized, client.post("/black") { header("Authorization", "Bearer nope") }.status)
+    }
+
+    @Test
+    fun hdmiTestRunsInTheBackgroundAndReports() {
+        val probing = PlayerServer(storage, pairing, clock, director, TestPlatform, hdmi = object : HdmiProbe {
+            override suspend fun run(report: (String) -> Unit) {
+                report("TV inputs: HDMI 1")
+            }
+        })
+        testApplication {
+            application { with(probing) { module() } }
+            val token = pair()
+            assertEquals(HttpStatusCode.Unauthorized, client.post("/hdmi/probe").status)
+            assertEquals(HttpStatusCode.OK, client.post("/hdmi/probe") { header("Authorization", "Bearer $token") }.status)
+            var report = HdmiReport(running = true, text = "")
+            repeat(50) {
+                if (!report.running) return@repeat
+                Thread.sleep(20)
+                report = decode(client.get("/hdmi/probe") { header("Authorization", "Bearer $token") }.bodyAsText())
+            }
+            assertEquals(false, report.running)
+            assertEquals("TV inputs: HDMI 1\n", report.text)
+        }
     }
 
     @Test
