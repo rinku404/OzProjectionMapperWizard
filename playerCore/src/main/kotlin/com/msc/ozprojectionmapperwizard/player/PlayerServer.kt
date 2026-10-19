@@ -6,6 +6,7 @@ import com.msc.ozprojectionmapperwizard.core.model.ShowManifest
 import com.msc.ozprojectionmapperwizard.core.protocol.ApiError
 import com.msc.ozprojectionmapperwizard.core.protocol.ClockSync
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
+import com.msc.ozprojectionmapperwizard.core.protocol.HdmiReport
 import com.msc.ozprojectionmapperwizard.core.protocol.LiveState
 import com.msc.ozprojectionmapperwizard.core.protocol.PairRequest
 import com.msc.ozprojectionmapperwizard.core.protocol.PairResponse
@@ -43,7 +44,10 @@ import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /** Platform facts the player cannot learn from the JVM alone. */
@@ -58,6 +62,11 @@ interface PlatformInfo {
     val refreshRate: Double
 }
 
+/** Finds out how this device's HDMI input can be reached, writing what it learns to [report] as it goes. */
+interface HdmiProbe {
+    suspend fun run(report: (String) -> Unit)
+}
+
 /** The player's HTTP API ([PlayerProtocol]), served on the local network. */
 class PlayerServer(
     private val storage: PlayerStorage,
@@ -67,8 +76,11 @@ class PlayerServer(
     private val platform: PlatformInfo,
     private val live: LiveSession = LiveSession(),
     private val updater: AppUpdater? = null,
+    private val hdmi: HdmiProbe? = null,
+    private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
 ) {
     private var engine: EmbeddedServer<*, *>? = null
+    @Volatile private var hdmiReport = HdmiReport(running = false, text = "")
 
     /** Starts listening on all interfaces. Blocking network work: call it off the main thread. */
     @Synchronized
@@ -203,6 +215,31 @@ class PlayerServer(
                         call.respond(HttpStatusCode.Accepted, info())
                     }
                 }
+                post("/hdmi/probe") {
+                    val probe = hdmi
+                    if (probe == null) {
+                        call.respond(HttpStatusCode.NotImplemented, ApiError("This player can't test HDMI input"))
+                        return@post
+                    }
+                    if (!hdmiReport.running) {
+                        hdmiReport = HdmiReport(running = true, text = "")
+                        scope.launch {
+                            val lines = StringBuilder()
+                            fun add(line: String) {
+                                lines.appendLine(line)
+                                hdmiReport = HdmiReport(running = true, text = lines.toString())
+                            }
+                            try {
+                                probe.run(::add)
+                            } catch (e: Exception) {
+                                add("The test stopped: ${e.message ?: e::class.simpleName}")
+                            }
+                            hdmiReport = HdmiReport(running = false, text = lines.toString())
+                        }
+                    }
+                    call.respond(hdmiReport)
+                }
+                get("/hdmi/probe") { call.respond(hdmiReport) }
                 post("/resume") {
                     director.resumeSchedule()
                     call.respond(info())

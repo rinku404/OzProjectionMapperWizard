@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -34,9 +35,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.msc.ozprojectionmapperwizard.controller.AppUpdates
 import com.msc.ozprojectionmapperwizard.controller.DiscoveredPlayer
 import com.msc.ozprojectionmapperwizard.controller.KnownPlayer
 import com.msc.ozprojectionmapperwizard.controller.KnownPlayers
@@ -49,7 +52,6 @@ import com.msc.ozprojectionmapperwizard.controller.SendVideo
 import com.msc.ozprojectionmapperwizard.core.model.Trigger
 import com.msc.ozprojectionmapperwizard.core.protocol.DeviceInfo
 import com.msc.ozprojectionmapperwizard.core.protocol.PlayReason
-import com.msc.ozprojectionmapperwizard.controller.AppUpdates
 import com.msc.ozprojectionmapperwizard.core.update.Releases
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -252,6 +254,8 @@ private fun ProjectorScreen(
     var watchingUpdate by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
     var triggers by remember { mutableStateOf<List<Trigger>>(emptyList()) }
+    var hdmiReport by remember { mutableStateOf<String?>(null) }
+    var hdmiRunning by remember { mutableStateOf(false) }
 
     fun act(label: String, action: suspend () -> DeviceInfo?) {
         if (busy) return
@@ -394,6 +398,37 @@ private fun ProjectorScreen(
                         TextButton(enabled = !busy, onClick = { act("Starting ${show.name}…") { client.play(show.id) } }) { Text("Play") }
                         TextButton(enabled = !busy, onClick = { act("Removing ${show.name}…") { client.removeShow(show.id) } }) { Text("Remove") }
                     }
+                }
+            }
+        }
+
+        // Finds out whether the projector's HDMI input can be drawn by the player, so it can be warped.
+        OutlinedButton(enabled = !busy && !hdmiRunning, modifier = Modifier.fillMaxWidth(), onClick = {
+            hdmiRunning = true
+            hdmiReport = "Starting the HDMI test…"
+            scope.launch {
+                try {
+                    var report = client.startHdmiProbe()
+                    var polls = 0
+                    while (report.running && polls++ < 45) {
+                        hdmiReport = report.text.ifBlank { "Testing…" }
+                        delay(2_000)
+                        report = client.hdmiProbe()
+                    }
+                    hdmiReport = report.text + if (report.running) "\n(Still running on the projector. Press the button again to see more.)" else ""
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    hdmiReport = describe(e, player.address)
+                } finally {
+                    hdmiRunning = false
+                }
+            }
+        }) { Text(if (hdmiRunning) "Testing HDMI input…" else "Test HDMI input") }
+        hdmiReport?.let { report ->
+            Card(Modifier.fillMaxWidth()) {
+                SelectionContainer {
+                    Text(report, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(12.dp))
                 }
             }
         }

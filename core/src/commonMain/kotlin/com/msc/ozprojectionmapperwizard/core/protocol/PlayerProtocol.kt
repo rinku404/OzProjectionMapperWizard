@@ -56,6 +56,10 @@ data class DeviceInfo(
 @Serializable
 data class UpdateRequest(val downloadUrl: String, val build: Int)
 
+/** Progress and findings of the player's HDMI input test, started with POST /hdmi/probe. */
+@Serializable
+data class HdmiReport(val running: Boolean, val text: String)
+
 @Serializable
 data class NowPlaying(val showId: String?, val reason: PlayReason)
 
